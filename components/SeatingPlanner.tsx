@@ -18,6 +18,8 @@ import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { createClient } from "@/lib/supabase/client";
 import InviteForm from "./InviteForm";
+import AgentChat from "./AgentChat";
+import type { AgentOperation, AgentApplyResult } from "@/lib/agentOperations";
 
 // ---------- palette / tokens ----------
 const C = {
@@ -938,6 +940,249 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     }, 40);
   }
 
+  // ---- conversational agent: apply a batch of proposed operations ----
+  function applyAgentOperations(operations: AgentOperation[]): AgentApplyResult[] {
+    if (readOnly) {
+      return operations.map((_, index) => ({ index, ok: false, message: "You don't have edit access." }));
+    }
+
+    let workingGuests = guests.map((g) => ({ ...g, groupIds: [...g.groupIds] }));
+    let workingGroups = groups.map((g) => ({ ...g }));
+    let workingTableGroups = tableGroups.map((tg) => ({ ...tg }));
+    let workingConstraints = constraints.map((c) => ({ ...c }));
+    let workingSeatAssignment: SeatAssignment = { ...seatAssignment };
+
+    function byName<T>(list: T[], nameOf: (x: T) => string, name: string): T | undefined {
+      const key = (name || "").trim().toLowerCase();
+      if (!key) return undefined;
+      return (
+        list.find((x) => nameOf(x).trim().toLowerCase() === key) ||
+        list.find((x) => nameOf(x).trim().toLowerCase().includes(key))
+      );
+    }
+    const findGuest = (name?: string) => byName(workingGuests, (g) => g.name, name || "");
+    const findGroup = (name?: string) => byName(workingGroups, (g) => g.name, name || "");
+    const findTableGroup = (label?: string) => byName(workingTableGroups, (t) => t.label, label || "");
+    const ensureGroupIds = (names: string[] | undefined) => {
+      const ids: string[] = [];
+      (names || []).forEach((gn) => {
+        let g = findGroup(gn);
+        if (!g) {
+          g = { id: genId(), name: gn.trim(), color: GROUP_COLORS[workingGroups.length % GROUP_COLORS.length] };
+          workingGroups = [...workingGroups, g];
+        }
+        ids.push(g.id);
+      });
+      return ids;
+    };
+
+    const results: AgentApplyResult[] = [];
+
+    operations.forEach((op, index) => {
+      try {
+        switch (op.type) {
+          case "add_guest": {
+            const name = (op.name || "").trim();
+            if (!name) throw new Error("Missing name.");
+            workingGuests = [...workingGuests, { id: genId(), name, groupIds: ensureGroupIds(op.groupNames) }];
+            break;
+          }
+          case "remove_guest": {
+            const g = findGuest(op.guestName);
+            if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
+            workingGuests = workingGuests.filter((x) => x.id !== g.id);
+            workingConstraints = workingConstraints.filter(
+              (c) => !((c.aType === "guest" && c.aId === g.id) || (c.bType === "guest" && c.bId === g.id))
+            );
+            workingSeatAssignment = Object.fromEntries(
+              Object.entries(workingSeatAssignment).filter(([, guestId]) => guestId !== g.id)
+            );
+            break;
+          }
+          case "rename_guest": {
+            const g = findGuest(op.guestName);
+            if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
+            if (!op.newName?.trim()) throw new Error("Missing new name.");
+            workingGuests = workingGuests.map((x) => (x.id === g.id ? { ...x, name: op.newName!.trim() } : x));
+            break;
+          }
+          case "set_guest_groups": {
+            const g = findGuest(op.guestName);
+            if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
+            const groupIds = ensureGroupIds(op.groupNames);
+            workingGuests = workingGuests.map((x) => (x.id === g.id ? { ...x, groupIds } : x));
+            break;
+          }
+          case "add_group": {
+            const name = (op.name || "").trim();
+            if (!name) throw new Error("Missing name.");
+            if (findGroup(name)) throw new Error(`Group "${name}" already exists.`);
+            workingGroups = [...workingGroups, { id: genId(), name, color: GROUP_COLORS[workingGroups.length % GROUP_COLORS.length] }];
+            break;
+          }
+          case "rename_group": {
+            const g = findGroup(op.groupName);
+            if (!g) throw new Error(`Couldn't find group "${op.groupName}".`);
+            if (!op.newName?.trim()) throw new Error("Missing new name.");
+            workingGroups = workingGroups.map((x) => (x.id === g.id ? { ...x, name: op.newName!.trim() } : x));
+            break;
+          }
+          case "remove_group": {
+            const g = findGroup(op.groupName);
+            if (!g) throw new Error(`Couldn't find group "${op.groupName}".`);
+            workingGroups = workingGroups.filter((x) => x.id !== g.id);
+            workingGuests = workingGuests.map((x) => ({ ...x, groupIds: x.groupIds.filter((gid) => gid !== g.id) }));
+            workingConstraints = workingConstraints.filter(
+              (c) => !((c.aType === "group" && c.aId === g.id) || (c.bType === "group" && c.bId === g.id))
+            );
+            break;
+          }
+          case "add_table_group": {
+            const label = (op.tableGroupLabel || "").trim();
+            if (!label) throw new Error("Missing table type label.");
+            const count = Number(op.count) > 0 ? Number(op.count) : 1;
+            const capacity = Number(op.capacity) > 0 ? Number(op.capacity) : 8;
+            workingTableGroups = [...workingTableGroups, { id: genId(), label, count, capacity }];
+            break;
+          }
+          case "update_table_group": {
+            const tg = findTableGroup(op.tableGroupLabel);
+            if (!tg) throw new Error(`Couldn't find table type "${op.tableGroupLabel}".`);
+            const patch: Partial<TableGroup> = {};
+            if (op.newTableGroupLabel?.trim()) patch.label = op.newTableGroupLabel.trim();
+            if (op.count !== undefined) patch.count = Number(op.count);
+            if (op.capacity !== undefined) patch.capacity = Number(op.capacity);
+            workingTableGroups = workingTableGroups.map((x) => (x.id === tg.id ? { ...x, ...patch } : x));
+            break;
+          }
+          case "remove_table_group": {
+            const tg = findTableGroup(op.tableGroupLabel);
+            if (!tg) throw new Error(`Couldn't find table type "${op.tableGroupLabel}".`);
+            const removedTableIds = new Set(buildTables([tg]).map((t) => t.id));
+            workingTableGroups = workingTableGroups.filter((x) => x.id !== tg.id);
+            workingSeatAssignment = Object.fromEntries(
+              Object.entries(workingSeatAssignment).filter(([seatId]) => !removedTableIds.has(seatId.split("#")[0]))
+            );
+            break;
+          }
+          case "seat_guest": {
+            const g = findGuest(op.guestName);
+            if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
+            const table = byName(buildTables(workingTableGroups), (t) => t.label, op.tableLabel || "");
+            if (!table) throw new Error(`Couldn't find table "${op.tableLabel}".`);
+            const occupied = new Set(Object.keys(workingSeatAssignment));
+            const freeSeat = buildSeats([table]).find((s) => !occupied.has(s.id));
+            if (!freeSeat) throw new Error(`"${table.label}" is full.`);
+            const next = { ...workingSeatAssignment };
+            const fromSeatId = Object.keys(next).find((sid) => next[sid] === g.id);
+            if (fromSeatId) delete next[fromSeatId];
+            next[freeSeat.id] = g.id;
+            workingSeatAssignment = next;
+            break;
+          }
+          case "unseat_guest": {
+            const g = findGuest(op.guestName);
+            if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
+            const next = { ...workingSeatAssignment };
+            const fromSeatId = Object.keys(next).find((sid) => next[sid] === g.id);
+            if (!fromSeatId) throw new Error(`"${g.name}" isn't currently seated.`);
+            delete next[fromSeatId];
+            workingSeatAssignment = next;
+            break;
+          }
+          case "swap_guests": {
+            const a = findGuest(op.guestNameA);
+            const b = findGuest(op.guestNameB);
+            if (!a || !b) throw new Error("Couldn't find one or both guests.");
+            const seatA = Object.keys(workingSeatAssignment).find((sid) => workingSeatAssignment[sid] === a.id);
+            const seatB = Object.keys(workingSeatAssignment).find((sid) => workingSeatAssignment[sid] === b.id);
+            if (!seatA || !seatB) throw new Error("Both guests need to already be seated to swap.");
+            const next = { ...workingSeatAssignment };
+            next[seatA] = b.id;
+            next[seatB] = a.id;
+            workingSeatAssignment = next;
+            break;
+          }
+          case "add_constraint": {
+            const aType: "guest" | "group" = op.aType === "group" ? "group" : "guest";
+            const bType: "guest" | "group" = op.bType === "group" ? "group" : "guest";
+            const aEntity = aType === "group" ? findGroup(op.aName) : findGuest(op.aName);
+            const bEntity = bType === "group" ? findGroup(op.bName) : findGuest(op.bName);
+            if (!aEntity || !bEntity) throw new Error(`Couldn't find "${op.aName}" or "${op.bName}".`);
+            workingConstraints = [
+              ...workingConstraints,
+              {
+                id: genId(),
+                aType,
+                aId: aEntity.id,
+                bType,
+                bId: bEntity.id,
+                type: op.constraintType === "cannot" ? "cannot" : "must",
+              },
+            ];
+            break;
+          }
+          case "remove_constraint": {
+            const nameOf = (type: "guest" | "group", id: string) =>
+              (type === "group" ? workingGroups.find((g) => g.id === id)?.name : workingGuests.find((g) => g.id === id)?.name) || "";
+            const aKey = (op.aName || "").trim().toLowerCase();
+            const bKey = (op.bName || "").trim().toLowerCase();
+            const match = workingConstraints.find((c) => {
+              const an = nameOf(c.aType, c.aId).trim().toLowerCase();
+              const bn = nameOf(c.bType, c.bId).trim().toLowerCase();
+              return (an === aKey && bn === bKey) || (an === bKey && bn === aKey);
+            });
+            if (!match) throw new Error(`Couldn't find a constraint between "${op.aName}" and "${op.bName}".`);
+            workingConstraints = workingConstraints.filter((c) => c.id !== match.id);
+            break;
+          }
+          case "regenerate_plan": {
+            const workingTables = buildTables(workingTableGroups);
+            let poolTables = workingTables;
+            if (fillMode === "consolidate") {
+              const chosenIds = pickConsolidatedTables(workingTables, workingGuests.length);
+              poolTables = workingTables.filter((t) => chosenIds.includes(t.id));
+            }
+            const poolSeats = buildSeats(poolTables);
+            if (poolSeats.length < workingGuests.length) throw new Error("Not enough seats for all guests.");
+            const poolSeatsById = Object.fromEntries(poolSeats.map((s) => [s.id, s]));
+            const workingGuestsByGroupId: Record<string, string[]> = {};
+            workingGuests.forEach((g) =>
+              (g.groupIds || []).forEach((gid) => (workingGuestsByGroupId[gid] = workingGuestsByGroupId[gid] || []).push(g.id))
+            );
+            const workingFlatPairs = expandAllConstraints(workingConstraints, workingGuestsByGroupId);
+            workingSeatAssignment = solveSeating(
+              poolSeats,
+              workingGuests.map((g) => g.id),
+              workingFlatPairs,
+              poolSeatsById,
+              fillMode,
+              minimizeChanges ? workingSeatAssignment : {}
+            );
+            setActiveTableIds(new Set(poolTables.map((t) => t.id)));
+            setShowAllTables(false);
+            setJustGenerated(true);
+            break;
+          }
+          default:
+            throw new Error("Unknown operation.");
+        }
+        results.push({ index, ok: true });
+      } catch (e) {
+        results.push({ index, ok: false, message: e instanceof Error ? e.message : "Failed." });
+      }
+    });
+
+    setGuests(workingGuests);
+    setGroups(workingGroups);
+    setTableGroups(workingTableGroups);
+    setConstraints(workingConstraints);
+    setSeatAssignment(workingSeatAssignment);
+    setPicked(null);
+
+    return results;
+  }
+
   const seatsShort = totalSeats < guests.length;
 
   return (
@@ -1613,6 +1858,13 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
           </div>
         )}
       </main>
+
+      <AgentChat
+        eventId={eventId}
+        role={role}
+        getState={() => ({ tableGroups, guests, groups, constraints, seatAssignment, fillMode })}
+        onApply={applyAgentOperations}
+      />
     </div>
   );
 }
