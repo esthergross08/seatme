@@ -251,7 +251,7 @@ function computeFlatViolations(
     const sameTable = sa.tableId === sb.tableId;
     const linked = p.mode === "table" ? sameTable : sameTable && areAdjacent(sa.seatIdx, sb.seatIdx, sa.capacity);
     const ok = p.type === "must" ? linked : !linked;
-    return { ...p, status: (ok ? "satisfied" : "violated") as const, seatA, seatB };
+    return { ...p, status: ok ? ("satisfied" as const) : ("violated" as const), seatA, seatB };
   });
 }
 
