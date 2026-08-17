@@ -13,12 +13,14 @@ import {
   Check,
   Sparkles,
   Upload,
+  Palette,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { createClient } from "@/lib/supabase/client";
 import InviteForm from "./InviteForm";
 import AgentChat from "./AgentChat";
+import DecorPanel from "./DecorPanel";
 import type { AgentOperation, AgentApplyResult } from "@/lib/agentOperations";
 
 // ---------- palette / tokens ----------
@@ -1334,6 +1336,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
           { id: "setup", label: "1. Tables", icon: Table2 },
           { id: "guests", label: "2. Guests & rules", icon: Users },
           { id: "seating", label: "3. Seating map", icon: LayoutGrid },
+          { id: "decor", label: "4. Decor ideas", icon: Palette },
         ].map((t) => {
           const Icon = t.icon;
           const active = tab === t.id;
@@ -1392,6 +1395,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
           { id: "setup", icon: Table2 },
           { id: "guests", icon: Users },
           { id: "seating", icon: LayoutGrid },
+          { id: "decor", icon: Palette },
         ].map((t) => {
           const Icon = t.icon;
           return (
@@ -2086,6 +2090,8 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
             )}
           </div>
         )}
+
+        {tab === "decor" && <DecorPanel eventId={eventId} readOnly={readOnly} />}
       </main>
 
       <AgentChat
