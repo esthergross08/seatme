@@ -162,10 +162,11 @@ function buildTables(tableGroups: TableGroup[], nameOverrides: Record<string, st
     for (let i = 0; i < count; i++) {
       const id = `${g.id}-${i}`;
       const autoLabel = count > 1 ? `${g.label} ${i + 1}` : g.label;
+      const override = nameOverrides[id];
       tables.push({
         id,
         groupId: g.id,
-        label: nameOverrides[id]?.trim() || autoLabel,
+        label: override && override.trim().length > 0 ? override : autoLabel,
         capacity,
         shape: g.shape || "round",
       });
@@ -508,25 +509,61 @@ function pickConsolidatedTables(tables: Table[], guestCount: number) {
 }
 
 // ---------- spreadsheet import parsing ----------
-const NAME_HEADERS = ["name", "guest", "guest name", "full name", "attendee", "attendee name"];
-const GROUP_HEADERS = ["group", "groups", "table group", "party", "category", "tag", "tags"];
+// Header synonyms are broad on purpose: Partiful, The Knot, Bliss & Bone, and
+// plain spreadsheets all use slightly different column names for the same thing.
+const NAME_HEADERS = ["name", "guest", "guest name", "full name", "attendee", "attendee name", "guest full name"];
+const FIRST_NAME_HEADERS = ["first name", "first", "given name"];
+const LAST_NAME_HEADERS = ["last name", "last", "surname", "family name"];
+const GROUP_HEADERS = ["group", "groups", "table group", "party", "category", "tag", "tags", "side", "household"];
+const STATUS_HEADERS = ["rsvp", "rsvp status", "status", "response", "attending", "invite status"];
+const NOT_ATTENDING_VALUES = [
+  "declined",
+  "decline",
+  "not attending",
+  "not going",
+  "no",
+  "cant go",
+  "can't go",
+  "cancelled",
+  "canceled",
+];
 
 function parseGuestRows(raw: unknown[][]) {
   const guests: { name: string; groupNames: string[] }[] = [];
   const groupNamesFound = new Set<string>();
-  if (!raw || raw.length === 0) return { guests, groupNamesFound };
+  let skippedNotAttending = 0;
+  if (!raw || raw.length === 0) return { guests, groupNamesFound, skippedNotAttending };
   const header = (raw[0] || []).map((h) => String(h ?? "").trim().toLowerCase());
   const nameIdx = header.findIndex((h) => NAME_HEADERS.includes(h));
+  const firstIdx = header.findIndex((h) => FIRST_NAME_HEADERS.includes(h));
+  const lastIdx = header.findIndex((h) => LAST_NAME_HEADERS.includes(h));
   const groupIdx = header.findIndex((h) => GROUP_HEADERS.includes(h));
-  const hasHeader = nameIdx !== -1;
+  const statusIdx = header.findIndex((h) => STATUS_HEADERS.includes(h));
+  const hasHeader = nameIdx !== -1 || firstIdx !== -1 || lastIdx !== -1;
   const startRow = hasHeader ? 1 : 0;
   const nameCol = hasHeader ? nameIdx : 0;
   const groupCol = hasHeader ? groupIdx : raw[0] && raw[0].length > 1 ? 1 : -1;
 
   for (let i = startRow; i < raw.length; i++) {
     const row = raw[i] || [];
-    const name = String(row[nameCol] ?? "").trim();
+    let name: string;
+    if (nameCol >= 0) {
+      name = String(row[nameCol] ?? "").trim();
+    } else {
+      const first = firstIdx >= 0 ? String(row[firstIdx] ?? "").trim() : "";
+      const last = lastIdx >= 0 ? String(row[lastIdx] ?? "").trim() : "";
+      name = [first, last].filter(Boolean).join(" ");
+    }
     if (!name) continue;
+
+    if (statusIdx >= 0) {
+      const status = String(row[statusIdx] ?? "").trim().toLowerCase();
+      if (NOT_ATTENDING_VALUES.includes(status)) {
+        skippedNotAttending++;
+        continue;
+      }
+    }
+
     let groupNames: string[] = [];
     if (groupCol >= 0) {
       const cell = String(row[groupCol] ?? "").trim();
@@ -535,7 +572,7 @@ function parseGuestRows(raw: unknown[][]) {
     groupNames.forEach((gn) => groupNamesFound.add(gn));
     guests.push({ name, groupNames });
   }
-  return { guests, groupNamesFound };
+  return { guests, groupNamesFound, skippedNotAttending };
 }
 
 // ---------- small UI atoms ----------
@@ -627,9 +664,11 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const [pendingImport, setPendingImport] = useState<{
     guests: { name: string; groupNames: string[] }[];
     groupNames: string[];
+    skippedNotAttending: number;
   } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  const [showImportHelp, setShowImportHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ---- Supabase autosave ----
@@ -837,13 +876,13 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
 
   // ---- spreadsheet import ----
   function finishParse(raw: unknown[][]) {
-    const { guests: parsedGuests, groupNamesFound } = parseGuestRows(raw);
+    const { guests: parsedGuests, groupNamesFound, skippedNotAttending } = parseGuestRows(raw);
     if (parsedGuests.length === 0) {
       setImportError("Couldn't find any names in that file — make sure there's a column of guest names.");
       return;
     }
     setImportError(null);
-    setPendingImport({ guests: parsedGuests, groupNames: [...groupNamesFound] });
+    setPendingImport({ guests: parsedGuests, groupNames: [...groupNamesFound], skippedNotAttending });
   }
 
   function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -894,9 +933,11 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     }));
     setGroups((gs) => [...gs, ...newGroups]);
     setGuests((gs) => (mode === "replace" ? importedGuests : [...gs, ...importedGuests]));
+    const skipped = pendingImport.skippedNotAttending;
     setImportSuccess(
       `Imported ${importedGuests.length} guest${importedGuests.length === 1 ? "" : "s"}` +
-        (newGroups.length ? ` and created ${newGroups.length} group${newGroups.length === 1 ? "" : "s"}.` : ".")
+        (newGroups.length ? ` and created ${newGroups.length} group${newGroups.length === 1 ? "" : "s"}.` : ".") +
+        (skipped > 0 ? ` Skipped ${skipped} marked as not attending.` : "")
     );
     setPendingImport(null);
   }
@@ -1469,7 +1510,31 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                   <Upload size={13} /> Import from Excel or CSV
                 </button>
                 <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} style={{ display: "none" }} />
+                <button
+                  onClick={() => setShowImportHelp((v) => !v)}
+                  className="text-xs font-medium underline underline-offset-2"
+                  style={{ color: C.muted }}
+                >
+                  {showImportHelp ? "Hide" : "Where do I get this file?"}
+                </button>
               </div>
+
+              {showImportHelp && (
+                <div className="mb-3 p-3 rounded-lg text-xs leading-relaxed space-y-2" style={{ backgroundColor: C.card, border: `1px solid ${C.line}`, color: C.ink }}>
+                  <div>
+                    <strong>Partiful:</strong> open your event → Guest List → tap "Export CSV" in the top right, then choose which RSVP statuses to include.
+                  </div>
+                  <div>
+                    <strong>The Knot:</strong> go to your Guest List Manager → "Download List" → "Entire Guest List" to get a CSV. If the button doesn't respond, try it in Chrome.
+                  </div>
+                  <div>
+                    <strong>Bliss &amp; Bone:</strong> from your dashboard, open your guest list / RSVP tracker and use the export option to download your RSVP data.
+                  </div>
+                  <div style={{ color: C.muted }}>
+                    Any of these CSVs will import cleanly — SeatMe automatically skips guests marked as declined or not attending.
+                  </div>
+                </div>
+              )}
 
               {importError && (
                 <div className="mb-3 p-2.5 rounded-lg text-xs" style={{ backgroundColor: "#F3E4E4", color: C.wine }}>
@@ -1491,6 +1556,9 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                     </>
                   )}
                   .
+                  {pendingImport.skippedNotAttending > 0 && (
+                    <> Skipped {pendingImport.skippedNotAttending} marked as not attending.</>
+                  )}
                   <div className="flex flex-wrap gap-2 mt-2">
                     <button onClick={() => confirmImport("add")} className="px-2.5 py-1 rounded-md font-semibold" style={{ backgroundColor: C.gold, color: "#fff" }}>
                       Add to list
