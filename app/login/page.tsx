@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 const C = {
@@ -14,6 +15,16 @@ const C = {
 };
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
+  const searchParams = useSearchParams();
+  const authError = searchParams.get("error") === "auth";
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +95,14 @@ export default function LoginPage() {
         <p style={{ fontSize: 14, color: C.muted, marginBottom: 24 }}>
           Enter your email and we&apos;ll send you a magic link — no password needed.
         </p>
+        {authError && status !== "sent" && (
+          <p style={{ color: C.wine, fontSize: 13, marginBottom: 16 }}>
+            That sign-in link didn&apos;t work — it may have expired, already been used, or been
+            opened in a different browser than the one you requested it from (this often happens
+            with links opened inside an app like Instagram or Messenger). Request a new link below
+            and open it in your regular browser.
+          </p>
+        )}
         {status === "sent" ? (
           <p style={{ fontSize: 14, color: C.sage }}>
             Check your inbox for a sign-in link. You can close this tab.
