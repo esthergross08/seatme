@@ -277,7 +277,8 @@ function solveSeating(
   guestIds: string[],
   flatPairs: FlatPair[],
   seatsById: Record<string, Seat>,
-  fillMode: FillMode = "spread"
+  fillMode: FillMode = "spread",
+  previousAssignment: SeatAssignment = {}
 ): SeatAssignment {
   const n = seats.length;
   if (n === 0 || guestIds.length === 0) return {};
@@ -285,6 +286,18 @@ function solveSeating(
   const distinctTableIds = [...new Set(seats.map((s) => s.tableId))];
   const avgPerTable = distinctTableIds.length ? guestIds.length / distinctTableIds.length : 0;
   const spread = fillMode === "spread" && distinctTableIds.length > 1;
+
+  // Only trust previous placements that are still valid: the guest must still
+  // be in this seating (not removed) and the seat must still exist in this pool
+  // (tables/capacities may have changed).
+  const guestIdSet = new Set(guestIds);
+  const prevSeatOfGuest: Record<string, string> = {};
+  for (const [seatId, guestId] of Object.entries(previousAssignment)) {
+    if (guestIdSet.has(guestId) && seatsById[seatId]) {
+      prevSeatOfGuest[guestId] = seatId;
+    }
+  }
+  const hasPrevious = Object.keys(prevSeatOfGuest).length > 0;
 
   function cost(assign: (string | null)[], guestPos: Record<string, number>) {
     let total = 0;
@@ -315,6 +328,21 @@ function solveSeating(
         total += Math.pow(c - avgPerTable, 2) * 0.6;
       }
     }
+    if (hasPrevious) {
+      // Soft penalty for drifting from the previous plan: a lot cheaper than any
+      // constraint violation, so constraints always win, but enough to make the
+      // solver prefer the layout closest to what was there before whenever a
+      // few equally-valid options exist. Moving someone to a different table
+      // costs more than moving them to a different seat at the same table.
+      for (let i = 0; i < assign.length; i++) {
+        const gid = assign[i];
+        if (!gid) continue;
+        const prevSeatId = prevSeatOfGuest[gid];
+        if (!prevSeatId || prevSeatId === seats[i].id) continue;
+        const prevSeat = seatsById[prevSeatId];
+        total += prevSeat.tableId === seats[i].tableId ? 0.3 : 2;
+      }
+    }
     return total;
   }
 
@@ -334,19 +362,52 @@ function solveSeating(
     return { assign, guestPos };
   }
 
+  function warmInit() {
+    const assign: (string | null)[] = new Array(n).fill(null);
+    const guestPos: Record<string, number> = {};
+    const seatIndexById: Record<string, number> = {};
+    seats.forEach((s, i) => (seatIndexById[s.id] = i));
+
+    const remainingGuests: string[] = [];
+    guestIds.forEach((gid) => {
+      const prevSeatId = prevSeatOfGuest[gid];
+      const idx = prevSeatId ? seatIndexById[prevSeatId] : undefined;
+      if (idx !== undefined && assign[idx] === null) {
+        assign[idx] = gid;
+        guestPos[gid] = idx;
+      } else {
+        remainingGuests.push(gid);
+      }
+    });
+
+    const openSeats: number[] = [];
+    for (let i = 0; i < n; i++) if (assign[i] === null) openSeats.push(i);
+    for (let i = openSeats.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [openSeats[i], openSeats[j]] = [openSeats[j], openSeats[i]];
+    }
+    remainingGuests.forEach((gid, i) => {
+      const seatPos = openSeats[i];
+      assign[seatPos] = gid;
+      guestPos[gid] = seatPos;
+    });
+    return { assign, guestPos };
+  }
+
   let best: (string | null)[] | null = null;
   let bestCost = Infinity;
   const restarts = guestIds.length > 60 ? 2 : 3;
   const iterations = Math.min(16000, 3500 + guestIds.length * 140);
 
   for (let r = 0; r < restarts; r++) {
-    const init = randomInit();
+    const init = hasPrevious && r === 0 ? warmInit() : randomInit();
     let assign = init.assign;
     const guestPos = init.guestPos;
     let curCost = cost(assign, guestPos);
-    let T = 8;
+    const T0 = hasPrevious && r === 0 ? 3 : 8;
+    let T = T0;
     for (let it = 0; it < iterations; it++) {
-      T = 8 * Math.pow(0.0006, it / iterations);
+      T = T0 * Math.pow(0.0006, it / iterations);
       const i = Math.floor(Math.random() * n);
       const j = Math.floor(Math.random() * n);
       if (i === j) continue;
@@ -503,6 +564,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const [fillMode, setFillMode] = useState<FillMode>(
     hasSavedData ? initialData!.fillMode ?? "spread" : "spread"
   );
+  const [minimizeChanges, setMinimizeChanges] = useState(true);
   const [activeTableIds, setActiveTableIds] = useState<Set<string> | null>(null);
   const [showAllTables, setShowAllTables] = useState(false);
   const [pendingImport, setPendingImport] = useState<{
@@ -860,7 +922,14 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
       }
       const poolSeats = buildSeats(poolTables);
       const poolSeatsById = Object.fromEntries(poolSeats.map((s) => [s.id, s]));
-      const result = solveSeating(poolSeats, guests.map((g) => g.id), flatPairs, poolSeatsById, fillMode);
+      const result = solveSeating(
+        poolSeats,
+        guests.map((g) => g.id),
+        flatPairs,
+        poolSeatsById,
+        fillMode,
+        minimizeChanges ? seatAssignment : {}
+      );
       setSeatAssignment(result);
       setActiveTableIds(new Set(chosenIds));
       setShowAllTables(false);
@@ -1328,6 +1397,15 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                   </button>
                 </div>
               </div>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: C.muted }}>
+                <input
+                  type="checkbox"
+                  checked={minimizeChanges}
+                  disabled={readOnly}
+                  onChange={(e) => setMinimizeChanges(e.target.checked)}
+                />
+                Keep close to current plan when regenerating
+              </label>
               {hiddenTableCount > 0 && (
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: C.muted }}>
                   <input type="checkbox" checked={showAllTables} onChange={(e) => setShowAllTables(e.target.checked)} />
