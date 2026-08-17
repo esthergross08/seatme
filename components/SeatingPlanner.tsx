@@ -43,11 +43,13 @@ const genId = () => Math.random().toString(36).slice(2, 9);
 const GROUP_COLORS = ["#A8823C", "#54704F", "#4A6FA5", "#8C3B3B", "#7A5C8E", "#B0562F"];
 
 // ---------- types ----------
+type TableShape = "round" | "oval" | "square" | "rectangle";
 interface TableGroup {
   id: string;
   label: string;
   count: number | "";
   capacity: number | "";
+  shape?: TableShape;
 }
 interface Guest {
   id: string;
@@ -83,6 +85,8 @@ interface PlannerData {
   constraints?: Constraint[];
   seatAssignment?: SeatAssignment;
   fillMode?: FillMode;
+  tableNameOverrides?: Record<string, string>;
+  tablePositions?: Record<string, { x: number; y: number }>;
 }
 
 interface SeatingPlannerProps {
@@ -96,8 +100,8 @@ interface SeatingPlannerProps {
 // ---------- seed data (used only for a brand-new, empty event) ----------
 function makeSeedData() {
   const seedTableGroups: TableGroup[] = [
-    { id: genId(), label: "Family Round", count: 2, capacity: 8 },
-    { id: genId(), label: "Sweetheart Table", count: 1, capacity: 2 },
+    { id: genId(), label: "Family Round", count: 2, capacity: 8, shape: "round" },
+    { id: genId(), label: "Sweetheart Table", count: 1, capacity: 2, shape: "round" },
   ];
   const seedGuestNames = [
     "Ava Chen", "Marcus Webb", "Priya Anand", "Noah Fischer", "Ines Duarte",
@@ -141,6 +145,7 @@ interface Table {
   groupId: string;
   label: string;
   capacity: number;
+  shape: TableShape;
 }
 interface Seat {
   id: string;
@@ -149,17 +154,20 @@ interface Seat {
   capacity: number;
 }
 
-function buildTables(tableGroups: TableGroup[]): Table[] {
+function buildTables(tableGroups: TableGroup[], nameOverrides: Record<string, string> = {}): Table[] {
   const tables: Table[] = [];
   tableGroups.forEach((g) => {
     const count = Number(g.count) > 0 ? Number(g.count) : 1;
     const capacity = Number(g.capacity) > 0 ? Number(g.capacity) : 1;
     for (let i = 0; i < count; i++) {
+      const id = `${g.id}-${i}`;
+      const autoLabel = count > 1 ? `${g.label} ${i + 1}` : g.label;
       tables.push({
-        id: `${g.id}-${i}`,
+        id,
         groupId: g.id,
-        label: count > 1 ? `${g.label} ${i + 1}` : g.label,
+        label: nameOverrides[id]?.trim() || autoLabel,
         capacity,
+        shape: g.shape || "round",
       });
     }
   });
@@ -182,23 +190,63 @@ function areAdjacent(i: number, j: number, n: number) {
   return d === 1 || d === n - 1;
 }
 
-function computeLayout(tables: Table[]) {
-  const cols = Math.max(1, Math.ceil(Math.sqrt(tables.length || 1)));
+function shapeDims(shape: TableShape, r: number) {
+  switch (shape) {
+    case "oval":
+      return { w: r * 2.5, h: r * 1.5 };
+    case "square":
+      return { w: r * 1.8, h: r * 1.8 };
+    case "rectangle":
+      return { w: r * 2.6, h: r * 1.5 };
+    default:
+      return { w: r * 2, h: r * 2 };
+  }
+}
+
+function shapeRadius(shape: TableShape) {
+  switch (shape) {
+    case "oval":
+      return "50%";
+    case "square":
+      return "12px";
+    case "rectangle":
+      return "10px";
+    default:
+      return "100%";
+  }
+}
+
+function computeLayout(tables: Table[], positionOverrides: Record<string, { x: number; y: number }> = {}) {
+  const autoTables = tables.filter((t) => !positionOverrides[t.id]);
+  const cols = Math.max(1, Math.ceil(Math.sqrt(autoTables.length || 1)));
   const cell = 250;
-  const positions: Record<string, { cx: number; cy: number; r: number; seatR: number }> = {};
-  tables.forEach((t, idx) => {
-    const col = idx % cols;
-    const row = Math.floor(idx / cols);
+  const positions: Record<string, { cx: number; cy: number; r: number; w: number; h: number; seatR: number }> = {};
+  let autoIdx = 0;
+  let maxX = cell;
+  let maxY = cell;
+  tables.forEach((t) => {
     const r = Math.min(58, 34 + t.capacity * 3.2);
-    positions[t.id] = {
-      cx: col * cell + cell / 2,
-      cy: row * cell + cell / 2,
-      r,
-      seatR: r + 34,
-    };
+    const { w, h } = shapeDims(t.shape, r);
+    const seatR = Math.max(w, h) / 2 + 34;
+    const override = positionOverrides[t.id];
+    let cx: number, cy: number;
+    if (override) {
+      cx = override.x;
+      cy = override.y;
+    } else {
+      const col = autoIdx % cols;
+      const row = Math.floor(autoIdx / cols);
+      cx = col * cell + cell / 2;
+      cy = row * cell + cell / 2;
+      autoIdx++;
+    }
+    positions[t.id] = { cx, cy, r, w, h, seatR };
+    maxX = Math.max(maxX, cx + seatR + 20);
+    maxY = Math.max(maxY, cy + seatR + 20);
   });
-  const rows = Math.ceil(tables.length / cols);
-  return { positions, width: cols * cell, height: Math.max(cell, rows * cell) };
+  const rows = Math.ceil(autoTables.length / cols);
+  const gridHeight = Math.max(cell, rows * cell);
+  return { positions, width: Math.max(cols * cell, maxX), height: Math.max(gridHeight, maxY) };
 }
 
 // ---------- constraint expansion (groups -> flat guest pairs) ----------
@@ -569,6 +617,13 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const [minimizeChanges, setMinimizeChanges] = useState(true);
   const [activeTableIds, setActiveTableIds] = useState<Set<string> | null>(null);
   const [showAllTables, setShowAllTables] = useState(false);
+  const [tableNameOverrides, setTableNameOverrides] = useState<Record<string, string>>(
+    hasSavedData ? initialData!.tableNameOverrides ?? {} : {}
+  );
+  const [tablePositions, setTablePositions] = useState<Record<string, { x: number; y: number }>>(
+    hasSavedData ? initialData!.tablePositions ?? {} : {}
+  );
+  const [dragTable, setDragTable] = useState<{ id: string; x: number; y: number } | null>(null);
   const [pendingImport, setPendingImport] = useState<{
     guests: { name: string; groupNames: string[] }[];
     groupNames: string[];
@@ -596,7 +651,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
         .from("events")
         .update({
           name: eventName,
-          data: { tableGroups, guests, groups, constraints, seatAssignment, fillMode },
+          data: { tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions },
           updated_at: new Date().toISOString(),
         })
         .eq("id", eventId);
@@ -606,9 +661,10 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventName, tableGroups, guests, groups, constraints, seatAssignment, fillMode]);
+  }, [eventName, tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions]);
 
-  const tables = useMemo(() => buildTables(tableGroups), [tableGroups]);
+  const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
+  const tableById = useMemo(() => Object.fromEntries(tables.map((t) => [t.id, t])), [tables]);
   const seats = useMemo(() => buildSeats(tables), [tables]);
   const seatsById = useMemo(() => Object.fromEntries(seats.map((s) => [s.id, s])), [seats]);
   const totalSeats = seats.length;
@@ -627,7 +683,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   }, [tables, activeTableIds, showAllTables, occupiedTableIds]);
 
   const hiddenTableCount = tables.length - visibleTables.length;
-  const layout = useMemo(() => computeLayout(visibleTables), [visibleTables]);
+  const layout = useMemo(() => computeLayout(visibleTables, tablePositions), [visibleTables, tablePositions]);
 
   const guestById = useMemo(() => Object.fromEntries(guests.map((g) => [g.id, g])), [guests]);
   const groupById = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups]);
@@ -644,6 +700,25 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     return m;
   }, [seatAssignment]);
   const unseatedGuests = useMemo(() => guests.filter((g) => !seatOfGuest[g.id]), [guests, seatOfGuest]);
+  const seatedCount = guests.length - unseatedGuests.length;
+
+  const occupiedCountByTable = useMemo(() => {
+    const m: Record<string, number> = {};
+    Object.entries(seatAssignment).forEach(([seatId, guestId]) => {
+      if (guestId && seatsById[seatId]) {
+        const tid = seatsById[seatId].tableId;
+        m[tid] = (m[tid] || 0) + 1;
+      }
+    });
+    return m;
+  }, [seatAssignment, seatsById]);
+
+  const underfilledTables = useMemo(() => {
+    if (seatedCount === 0) return [];
+    return visibleTables
+      .map((t) => ({ table: t, occupied: occupiedCountByTable[t.id] || 0 }))
+      .filter((x) => x.table.capacity > 0 && x.occupied / x.table.capacity < 0.5);
+  }, [visibleTables, occupiedCountByTable, seatedCount]);
 
   const flatPairs = useMemo(() => expandAllConstraints(constraints, guestsByGroupId), [constraints, guestsByGroupId]);
   const flatViolations = useMemo(() => computeFlatViolations(flatPairs, seatAssignment, seatsById), [flatPairs, seatAssignment, seatsById]);
@@ -709,7 +784,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   // ---- table group handlers ----
   const addTableGroup = () => {
     if (readOnly) return;
-    setTableGroups((tg) => [...tg, { id: genId(), label: `Table type ${tg.length + 1}`, count: 1, capacity: 8 }]);
+    setTableGroups((tg) => [...tg, { id: genId(), label: `Table type ${tg.length + 1}`, count: 1, capacity: 8, shape: "round" }]);
   };
   const updateTableGroup = (id: string, patch: Partial<TableGroup>) => {
     if (readOnly) return;
@@ -718,6 +793,14 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const removeTableGroup = (id: string) => {
     if (readOnly) return;
     setTableGroups((tg) => tg.filter((g) => g.id !== id));
+  };
+  const renameTable = (tableId: string, name: string) => {
+    if (readOnly) return;
+    setTableNameOverrides((m) => ({ ...m, [tableId]: name }));
+  };
+  const moveTable = (tableId: string, x: number, y: number) => {
+    if (readOnly) return;
+    setTablePositions((m) => ({ ...m, [tableId]: { x, y } }));
   };
 
   // ---- guest handlers ----
@@ -1328,6 +1411,21 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       style={{ borderColor: C.line }}
                     />
                   </label>
+                  <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }}>
+                    Shape
+                    <select
+                      value={g.shape || "round"}
+                      disabled={readOnly}
+                      onChange={(e) => updateTableGroup(g.id, { shape: e.target.value as TableShape })}
+                      className="px-2 py-1 rounded-md border text-sm"
+                      style={{ borderColor: C.line, color: C.ink }}
+                    >
+                      <option value="round">Round</option>
+                      <option value="oval">Oval</option>
+                      <option value="square">Square</option>
+                      <option value="rectangle">Rectangle</option>
+                    </select>
+                  </label>
                   <IconBtn danger title="Remove table type" onClick={() => removeTableGroup(g.id)} disabled={readOnly}>
                     <Trash2 size={15} />
                   </IconBtn>
@@ -1440,6 +1538,11 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                         className="flex-1 bg-transparent outline-none text-sm"
                         style={{ color: C.ink, fontFamily: "Fraunces, serif" }}
                       />
+                      <span className="text-[10px] shrink-0 whitespace-nowrap" style={{ color: seatOfGuest[g.id] ? C.sage : C.muted }}>
+                        {seatOfGuest[g.id]
+                          ? `Seated · ${tableById[seatsById[seatOfGuest[g.id]]?.tableId ?? ""]?.label ?? ""}`
+                          : "Unseated"}
+                      </span>
                       <IconBtn danger title="Remove guest" onClick={() => removeGuest(g.id)} disabled={readOnly}>
                         <X size={14} />
                       </IconBtn>
@@ -1676,6 +1779,30 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
               </div>
             )}
 
+            <div className="mb-5 flex items-center gap-2 text-sm" style={{ color: C.ink }}>
+              <Users size={15} style={{ color: C.gold }} />
+              <span>
+                <strong>{seatedCount}</strong> of {guests.length} guest{guests.length === 1 ? "" : "s"} seated
+                {unseatedGuests.length > 0 && <span style={{ color: C.muted }}> · {unseatedGuests.length} unseated</span>}
+              </span>
+            </div>
+
+            {underfilledTables.length > 0 && (
+              <div className="mb-5 p-3 rounded-xl text-sm" style={{ backgroundColor: "#FBF3E4", color: C.ink }}>
+                <div className="flex items-center gap-2 font-semibold" style={{ color: C.gold }}>
+                  <AlertTriangle size={16} />
+                  {underfilledTables.length} table{underfilledTables.length === 1 ? "" : "s"} under half full
+                </div>
+                <ul className="mt-1.5 space-y-1 pl-1">
+                  {underfilledTables.map(({ table, occupied }) => (
+                    <li key={table.id}>
+                      <strong>{table.label}</strong>: {occupied}/{table.capacity} seated — move guests here from a fuller table, or shrink/remove this table type in Step 1.
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {unseatedGuests.length > 0 && (
               <div className="mb-5">
                 <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.muted }}>
@@ -1731,23 +1858,57 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                   </svg>
 
                   {visibleTables.map((t) => {
-                    const pos = layout.positions[t.id];
+                    const basePos = layout.positions[t.id];
+                    const pos = dragTable && dragTable.id === t.id ? { ...basePos, cx: dragTable.x, cy: dragTable.y } : basePos;
+                    const startTableDrag = (e: React.MouseEvent) => {
+                      if (readOnly) return;
+                      e.preventDefault();
+                      const startClientX = e.clientX;
+                      const startClientY = e.clientY;
+                      const startX = basePos.cx;
+                      const startY = basePos.cy;
+                      const minCoord = basePos.seatR + 10;
+                      const onMove = (ev: MouseEvent) => {
+                        const nx = Math.max(minCoord, startX + (ev.clientX - startClientX));
+                        const ny = Math.max(minCoord, startY + (ev.clientY - startClientY));
+                        setDragTable({ id: t.id, x: nx, y: ny });
+                      };
+                      const onUp = (ev: MouseEvent) => {
+                        const nx = Math.max(minCoord, startX + (ev.clientX - startClientX));
+                        const ny = Math.max(minCoord, startY + (ev.clientY - startClientY));
+                        moveTable(t.id, nx, ny);
+                        setDragTable(null);
+                        window.removeEventListener("mousemove", onMove);
+                        window.removeEventListener("mouseup", onUp);
+                      };
+                      window.addEventListener("mousemove", onMove);
+                      window.addEventListener("mouseup", onUp);
+                    };
                     return (
                       <div key={t.id}>
                         <div
-                          className="absolute rounded-full border-2 flex items-center justify-center text-center px-2"
+                          onMouseDown={startTableDrag}
+                          className="absolute border-2 flex items-center justify-center text-center px-2"
                           style={{
-                            left: pos.cx - pos.r,
-                            top: pos.cy - pos.r,
-                            width: pos.r * 2,
-                            height: pos.r * 2,
+                            left: pos.cx - pos.w / 2,
+                            top: pos.cy - pos.h / 2,
+                            width: pos.w,
+                            height: pos.h,
+                            borderRadius: shapeRadius(t.shape),
                             borderColor: C.goldSoft,
                             backgroundColor: "#fff",
+                            cursor: readOnly ? "default" : "move",
                           }}
                         >
-                          <span className="text-[11px] font-medium leading-tight" style={{ color: C.muted, fontFamily: "Inter, sans-serif" }}>
-                            {t.label}
-                          </span>
+                          <input
+                            value={t.label}
+                            onChange={(e) => renameTable(t.id, e.target.value)}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            disabled={readOnly}
+                            title="Click to rename this table"
+                            className="text-[11px] font-medium leading-tight text-center bg-transparent outline-none w-full"
+                            style={{ color: C.muted, fontFamily: "Inter, sans-serif" }}
+                          />
                         </div>
                         {Array.from({ length: t.capacity }).map((_, i) => {
                           const seatId = `${t.id}#${i}`;
