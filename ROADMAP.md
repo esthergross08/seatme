@@ -14,6 +14,8 @@ Decor tab (free): connect a Pinterest board per event, view first 3 pins with an
 
 Privacy policy page at `/privacy`, required for the Pinterest app review.
 
+Exports (2026-08-18): "Excel" button on the seating tab downloads a Table/Seat/Guest list in seat order (so seatmates land on consecutive rows) via the existing SheetJS (`xlsx`) dependency. "PDF" button (Map view only) rasterizes the on-screen floor plan via `html2canvas-pro` and assembles it into a PDF sized to fit via `jspdf` — both are new dependencies added to `package.json`, run `npm install` to pick them up. Used `html2canvas-pro` rather than the original `html2canvas` because Tailwind v4's default oklch-based color output breaks the unmaintained original.
+
 ## Built, not yet turned on
 
 **AI table mockup image** — generates a photorealistic image of just the table (centerpiece, linens, place settings — no room, no people), grounded in the connected Pinterest board. Backend code is done (`/api/pinterest/mockup`, `lib/openaiImage.ts`) and left in place but dormant; the UI trigger button was intentionally removed from `DecorPanel.tsx` (2026-08-18) since it wasn't leading anywhere yet. Blocked on:
@@ -34,6 +36,12 @@ Open questions to resolve before building:
 - **What stays free** — current assumption: seating planner + text decor suggestions stay free; mockup image + shop recommendations are the paid add-on. Confirm before building.
 
 Not started. Revisit this section when ready to scope the paid tier properly — it's a real new subsystem (billing + a new data source), not a small add-on.
+
+**Status**: Esther submitted a video demo to Pinterest requesting Standard access (2026-08-18), which would let any user connect their own board (Trial access currently only supports Esther's own account and shares one rate-limit bucket across the whole app). Awaiting Pinterest's review — no fixed SLA given.
+
+### Idea: stylized, printable seating lists + table name designs
+
+Raised 2026-08-18, alongside the Excel/PDF export work above. Instead of (or in addition to) the plain Excel/PDF exports, generate a *styled* seating list and table name cards/signage that visually match the couple's connected Pinterest board — and let the user iterate on the design (regenerate, pick a variant) rather than getting one fixed output. Natural extension of the Design tier: reuses the same board-derived style/palette work as the decor suggestion and mockup image, applied to printable documents instead of a product photo. Not scoped — fold into the Design tier planning above when that gets picked up, including deciding whether styled exports are part of the paid bundle or a lighter free upsell toward it.
 
 ## Longer-term vision
 

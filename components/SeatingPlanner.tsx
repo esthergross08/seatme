@@ -14,6 +14,8 @@ import {
   Sparkles,
   Upload,
   Palette,
+  Download,
+  FileImage,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -672,6 +674,8 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [showImportHelp, setShowImportHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mapCaptureRef = useRef<HTMLDivElement>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   // ---- Supabase autosave ----
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -1064,6 +1068,47 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
       setSolving(false);
       setJustGenerated(true);
     }, 40);
+  }
+
+  // ---- export handlers ----
+  function safeFileName() {
+    return eventName.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "") || "Event";
+  }
+
+  function exportExcel() {
+    const rows: (string | number)[][] = [["Table", "Seat", "Guest"]];
+    visibleTables.forEach((t) => {
+      for (let i = 0; i < t.capacity; i++) {
+        const seatId = `${t.id}#${i}`;
+        const guestId = seatAssignment[seatId];
+        const guestName = guestId ? guestById[guestId]?.name || "" : "";
+        rows.push([t.label, i + 1, guestName || "— empty —"]);
+      }
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 22 }, { wch: 8 }, { wch: 28 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Seating");
+    XLSX.writeFile(wb, `${safeFileName()} - Seating List.xlsx`);
+  }
+
+  async function exportPdf() {
+    if (!mapCaptureRef.current) return;
+    setExportingPdf(true);
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas-pro"), import("jspdf")]);
+      const canvas = await html2canvas(mapCaptureRef.current, { backgroundColor: "#FCFAF4", scale: 2 });
+      const imgData = canvas.toDataURL("image/png");
+      const orientation = canvas.width >= canvas.height ? "landscape" : "portrait";
+      const pdf = new jsPDF({ orientation, unit: "pt", format: [canvas.width, canvas.height] });
+      pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+      pdf.save(`${safeFileName()} - Seat Map.pdf`);
+    } catch (e) {
+      console.error("PDF export failed:", e);
+      window.alert(`Couldn't generate the PDF: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExportingPdf(false);
+    }
   }
 
   // ---- conversational agent: apply a batch of proposed operations ----
@@ -1788,6 +1833,24 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                   <Wand2 size={15} />
                   {solving ? "Generating…" : "Auto-generate seating"}
                 </button>
+                <button
+                  onClick={exportExcel}
+                  disabled={tables.length === 0}
+                  title="Download the seating list as an Excel file"
+                  className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
+                  style={{ borderColor: C.line, color: C.ink }}
+                >
+                  <Download size={14} /> Excel
+                </button>
+                <button
+                  onClick={exportPdf}
+                  disabled={tables.length === 0 || exportingPdf || seatingView !== "map"}
+                  title={seatingView !== "map" ? "Switch to Map view to export a PDF" : "Download the seat map as a PDF"}
+                  className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
+                  style={{ borderColor: C.line, color: C.ink }}
+                >
+                  <FileImage size={14} /> {exportingPdf ? "Exporting…" : "PDF"}
+                </button>
               </div>
             </div>
 
@@ -1904,7 +1967,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
 
             {seatingView === "map" ? (
               <div className="relative rounded-2xl border p-6 overflow-auto" style={{ borderColor: C.line, backgroundColor: "#FCFAF4" }} onDragOver={(e) => e.preventDefault()}>
-                <div className="relative" style={{ width: layout.width, height: layout.height, minWidth: layout.width }}>
+                <div ref={mapCaptureRef} className="relative" style={{ width: layout.width, height: layout.height, minWidth: layout.width }}>
                   <svg className="absolute inset-0 pointer-events-none" width={layout.width} height={layout.height}>
                     {flatViolations
                       .filter((v) => v.status !== "unseated")
