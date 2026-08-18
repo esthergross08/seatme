@@ -202,3 +202,30 @@ export async function listBoardPins(accessToken: string, boardId: string, pageSi
     description: typeof p.description === "string" ? p.description : undefined,
   }));
 }
+
+export interface DownloadedImage {
+  mediaType: string;
+  base64: string;
+}
+
+// Downloads pin images ourselves (rather than handing raw URLs to a
+// third-party AI API) since Pinterest's image CDN disallows fetch-by-url
+// via robots.txt for at least one provider we call. Used by both the
+// text-suggestion and mockup-image routes.
+export async function downloadPinImages(pins: PinterestPin[], limit = 8): Promise<DownloadedImage[]> {
+  const urls = pins.map((p) => p.imageUrl).filter((u): u is string => !!u).slice(0, limit);
+  const images: DownloadedImage[] = [];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const mediaType = res.headers.get("content-type") || "image/jpeg";
+      if (!mediaType.startsWith("image/")) continue;
+      const buffer = Buffer.from(await res.arrayBuffer());
+      images.push({ mediaType, base64: buffer.toString("base64") });
+    } catch {
+      // Skip pins we can't download; callers work with whatever succeeded.
+    }
+  }
+  return images;
+}

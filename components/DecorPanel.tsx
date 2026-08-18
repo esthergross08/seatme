@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw } from "lucide-react";
+import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Image as ImageIcon } from "lucide-react";
 
 const C = {
   ink: "#221F2B",
@@ -44,8 +44,11 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
   const [selectedBoardName, setSelectedBoardName] = useState<string | null>(null);
   const [pins, setPins] = useState<Pin[]>([]);
   const [pinsLoading, setPinsLoading] = useState(false);
+  const [showAllPins, setShowAllPins] = useState(false);
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
+  const [mockupImage, setMockupImage] = useState<string | null>(null);
+  const [mockupLoading, setMockupLoading] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
 
   async function loadBoards() {
@@ -68,6 +71,7 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
 
   async function loadPins() {
     setPinsLoading(true);
+    setShowAllPins(false);
     try {
       const res = await fetch(`/api/pinterest/pins?eventId=${eventId}`);
       const data = await res.json();
@@ -123,6 +127,7 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
       setSelectedBoardId(board.id);
       setSelectedBoardName(board.name);
       setSuggestion(null);
+      setMockupImage(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that board.");
     }
@@ -146,6 +151,7 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
       setSelectedBoardName(null);
       setPins([]);
       setSuggestion(null);
+      setMockupImage(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't disconnect.");
     }
@@ -168,6 +174,25 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
       setError(e instanceof Error ? e.message : "Couldn't generate a suggestion.");
     } finally {
       setSuggestLoading(false);
+    }
+  }
+
+  async function generateMockup() {
+    setMockupLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/pinterest/mockup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Couldn't generate a mockup image.");
+      setMockupImage(data.image);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't generate a mockup image.");
+    } finally {
+      setMockupLoading(false);
     }
   }
 
@@ -272,6 +297,7 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
                     setSelectedBoardName(null);
                     setPins([]);
                     setSuggestion(null);
+                    setMockupImage(null);
                   }}
                   className="text-xs font-medium underline underline-offset-2"
                   style={{ color: C.muted }}
@@ -290,42 +316,85 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
               <Loader2 size={14} className="animate-spin" /> Loading pins…
             </div>
           ) : (
-            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 mb-4">
-              {pins
-                .filter((p) => p.imageUrl)
-                .map((p) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={p.id}
-                    src={p.imageUrl!}
-                    alt={p.title || p.description || "Pinned image"}
-                    className="w-full aspect-square object-cover rounded-lg border"
-                    style={{ borderColor: C.line }}
-                  />
-                ))}
-              {pins.length === 0 && (
-                <div className="col-span-full text-xs" style={{ color: C.muted }}>
-                  No pins found on this board yet.
-                </div>
+            <>
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 mb-2">
+                {(() => {
+                  const withImages = pins.filter((p) => p.imageUrl);
+                  const visible = showAllPins ? withImages : withImages.slice(0, 3);
+                  return visible.map((p) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={p.id}
+                      src={p.imageUrl!}
+                      alt={p.title || p.description || "Pinned image"}
+                      className="w-full aspect-square object-cover rounded-lg border"
+                      style={{ borderColor: C.line }}
+                    />
+                  ));
+                })()}
+                {pins.length === 0 && (
+                  <div className="col-span-full text-xs" style={{ color: C.muted }}>
+                    No pins found on this board yet.
+                  </div>
+                )}
+              </div>
+              {pins.filter((p) => p.imageUrl).length > 3 && (
+                <button
+                  onClick={() => setShowAllPins((v) => !v)}
+                  className="mb-4 text-xs font-medium underline underline-offset-2"
+                  style={{ color: C.muted }}
+                >
+                  {showAllPins ? "Show fewer" : `Show all ${pins.filter((p) => p.imageUrl).length} pins`}
+                </button>
               )}
-            </div>
+              {pins.filter((p) => p.imageUrl).length <= 3 && <div className="mb-4" />}
+            </>
           )}
 
           {!readOnly && (
-            <button
-              onClick={suggestDecor}
-              disabled={suggestLoading || pins.length === 0}
-              className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg disabled:opacity-40 mb-4"
-              style={{ backgroundColor: C.gold, color: "#fff" }}
-            >
-              {suggestLoading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-              {suggestLoading ? "Thinking…" : suggestion ? "Suggest again" : "Suggest decor"}
-            </button>
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button
+                onClick={suggestDecor}
+                disabled={suggestLoading || pins.length === 0}
+                className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg disabled:opacity-40"
+                style={{ backgroundColor: C.gold, color: "#fff" }}
+              >
+                {suggestLoading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                {suggestLoading ? "Thinking…" : suggestion ? "Suggest again" : "Suggest decor"}
+              </button>
+              <button
+                onClick={generateMockup}
+                disabled={mockupLoading || pins.length === 0}
+                className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg border disabled:opacity-40"
+                style={{ borderColor: C.gold, color: C.gold }}
+              >
+                {mockupLoading ? <Loader2 size={15} className="animate-spin" /> : <ImageIcon size={15} />}
+                {mockupLoading ? "Generating…" : mockupImage ? "Generate again" : "Generate table mockup"}
+              </button>
+            </div>
           )}
 
           {suggestion && (
-            <div className="p-4 rounded-xl text-sm leading-relaxed whitespace-pre-wrap" style={{ backgroundColor: C.goldSoft, color: C.ink }}>
+            <div className="p-4 rounded-xl text-sm leading-relaxed whitespace-pre-wrap mb-4" style={{ backgroundColor: C.goldSoft, color: C.ink }}>
               {suggestion}
+            </div>
+          )}
+
+          {mockupLoading && (
+            <div className="flex items-center gap-2 text-sm mb-4" style={{ color: C.muted }}>
+              <Loader2 size={14} className="animate-spin" /> Generating a mockup — this can take up to a minute…
+            </div>
+          )}
+
+          {mockupImage && (
+            <div className="mb-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={mockupImage}
+                alt="AI-generated table mockup"
+                className="w-full max-w-md rounded-xl border"
+                style={{ borderColor: C.line }}
+              />
             </div>
           )}
         </div>

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getEventRole } from "@/lib/eventAccess";
-import { getValidAccessToken, listBoardPins } from "@/lib/pinterest";
+import { getValidAccessToken, listBoardPins, downloadPinImages } from "@/lib/pinterest";
 
 export const runtime = "nodejs";
 
@@ -40,14 +40,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Couldn't load pins." }, { status: 502 });
   }
 
-  const imageUrls = pins.map((p) => p.imageUrl).filter((u): u is string => !!u).slice(0, 8);
-  if (imageUrls.length === 0) {
-    return NextResponse.json({ error: "That board doesn't have any pins with readable images yet." }, { status: 400 });
+  // Anthropic's "fetch by URL" image source respects the target site's
+  // robots.txt, and Pinterest's image CDN disallows that — so we download
+  // each pin ourselves and send it as base64 instead.
+  const downloaded = await downloadPinImages(pins, 8);
+  if (downloaded.length === 0) {
+    return NextResponse.json({ error: "Couldn't download any of the pinned images. Try again in a moment." }, { status: 502 });
   }
 
   const content = [
     { type: "text" as const, text: "Here are pins from our wedding inspiration board. Suggest table decor based on these:" },
-    ...imageUrls.map((url) => ({ type: "image" as const, source: { type: "url" as const, url } })),
+    ...downloaded.map((img) => ({
+      type: "image" as const,
+      source: { type: "base64" as const, media_type: img.mediaType, data: img.base64 },
+    })),
   ];
 
   let anthropicRes: Response;
