@@ -10,17 +10,18 @@ Floor plan: per-table custom names, four table shapes (round/oval/square/rectang
 
 Guest import: format-tolerant CSV/Excel parsing (first/last name columns, broader header matching, auto-skip declined RSVPs), in-app explainer for exporting from Partiful/The Knot/Bliss & Bone (none of which have a public API, so CSV export is the only path).
 
-Decor tab (free): connect a Pinterest board per event, view pins, get a text decor suggestion grounded in the board's actual images (Claude vision).
+Decor tab (free): connect a Pinterest board per event, view first 3 pins with an option to expand to the full board, get a short text decor suggestion (one style recap sentence + 3-5 bullet recommendations) grounded in the board's actual images (Claude vision).
 
 Privacy policy page at `/privacy`, required for the Pinterest app review.
 
 ## Built, not yet turned on
 
-**AI table mockup image** — generates a photorealistic image of just the table (centerpiece, linens, place settings — no room, no people), grounded in the connected Pinterest board. Code is done (`/api/pinterest/mockup`, `lib/openaiImage.ts`), blocked on:
+**AI table mockup image** — generates a photorealistic image of just the table (centerpiece, linens, place settings — no room, no people), grounded in the connected Pinterest board. Backend code is done (`/api/pinterest/mockup`, `lib/openaiImage.ts`) and left in place but dormant; the UI trigger button was intentionally removed from `DecorPanel.tsx` (2026-08-18) since it wasn't leading anywhere yet. Blocked on:
 - OpenAI account/org verification (platform.openai.com → Settings → Organization)
 - An `OPENAI_API_KEY` from Esther, wired into `.env.local` and Vercel
+- A decision to bundle it into the paid Design tier (see below) rather than ship it free
 
-Real per-image cost (roughly a few cents to ~$0.20 depending on settings) and 10–30+ second generation time — something to factor into how it's paywalled/rate-limited.
+Real per-image cost (roughly a few cents to ~$0.20 depending on settings) and 10–30+ second generation time — something to factor into how it's paywalled/rate-limited. When picking this back up, re-add a button in `DecorPanel.tsx` calling `POST /api/pinterest/mockup`.
 
 ## Planned: paid "Design tier"
 

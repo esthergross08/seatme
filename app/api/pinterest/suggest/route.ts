@@ -5,9 +5,13 @@ import { getValidAccessToken, listBoardPins, downloadPinImages } from "@/lib/pin
 
 export const runtime = "nodejs";
 
-const SYSTEM_PROMPT = `You are a table-decor consultant inside SeatMe, a wedding/event seating planner. You'll be shown images pinned to the couple's own inspiration board. Study the colors, materials, and style across the images, then suggest concrete table decor grounded in what they've actually pinned — don't suggest a generic style that ignores the images.
+const SYSTEM_PROMPT = `You are a table-decor consultant inside SeatMe, an event seating planner. You'll be shown images pinned to the user's own inspiration board for their event. Study the colors, materials, and style across the images, then suggest concrete table decor grounded in what they've actually pinned — don't suggest a generic style that ignores the images.
 
-Cover, briefly: (1) the color palette and overall style you're seeing, (2) a centerpiece suggestion, (3) linens/tableware suggestion, (4) one more concrete detail (lighting, favors, signage, etc). Keep it to a short, warm, concrete paragraph or two — no headers, no bullet lists, plain conversational text.`;
+Respond in exactly this format, nothing else:
+- Line 1: one short sentence recapping the color palette and overall style you observe across the images.
+- Then 3 to 5 bullet points, each starting with "- ", each a short, to-the-point, concrete decor recommendation (centerpiece, linens/tableware, lighting, or similar) — no explanations, no extra sentences per bullet.
+
+No headers, no intro like "Here's what I see", no closing remarks — just the one recap sentence followed by the bullets.`;
 
 export async function POST(request: Request) {
   let body: { eventId?: string };
@@ -49,7 +53,7 @@ export async function POST(request: Request) {
   }
 
   const content = [
-    { type: "text" as const, text: "Here are pins from our wedding inspiration board. Suggest table decor based on these:" },
+    { type: "text" as const, text: "Here are pins from my event inspiration board. Suggest table decor based on these:" },
     ...downloaded.map((img) => ({
       type: "image" as const,
       source: { type: "base64" as const, media_type: img.mediaType, data: img.base64 },
@@ -67,7 +71,7 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 700,
+        max_tokens: 350,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content }],
       }),

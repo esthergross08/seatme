@@ -1,14 +1,14 @@
 // ---------- OpenAI image generation helper ----------
 // Uses the Responses API's built-in image_generation tool so we can pass
 // Pinterest pin images in as visual references, grounding the generated
-// mockup in the couple's actual pinned style rather than a generic result.
+// mockup in the user's actual pinned style rather than a generic result.
 // Docs: https://developers.openai.com/api/docs/guides/image-generation
 
 import type { DownloadedImage } from "./pinterest";
 
 const RESPONSES_URL = "https://api.openai.com/v1/responses";
 
-const MOCKUP_PROMPT = `Using the attached reference images as style inspiration (colors, materials, florals, tableware), generate a single photorealistic image of ONE fully styled wedding reception table — centerpiece, place settings, glassware, and linens.
+const MOCKUP_PROMPT = `Using the attached reference images as style inspiration (colors, materials, florals, tableware), generate a single photorealistic image of ONE fully styled event table — centerpiece, place settings, glassware, and linens.
 
 Frame it as a close-up, product-style shot of just the table itself, from a slightly elevated angle. Do not show the room, walls, floor, ceiling, other tables, or any people — only the table and what's on it, isolated against a softly blurred neutral background.`;
 
