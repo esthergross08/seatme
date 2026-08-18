@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local-only admin usage report (contains user PII, never commit)
+/reports/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

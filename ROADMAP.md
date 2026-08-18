@@ -18,7 +18,9 @@ Exports (2026-08-18): "Excel" button on the seating tab downloads a Table/Seat/G
 
 Public site (2026-08-18): shared header/footer with an account dropdown (My info / My events / Sign out) present on every page, real homepage with a hero photo, About/Contact/Terms/Privacy pages, `/home` as the signed-in landing page, `/account` for editing first/last name and a recovery phone number (new `profiles` table), and an open feedback box on the About page (`feedback_notes` table, anonymous submissions allowed).
 
-Guest notes & group stats (2026-08-18): optional per-guest note (dietary needs, high chair, wheelchair access, etc.) editable in the Guests tab, shown as a tooltip and a small gold dot indicator on that guest's seat in the floor-plan map, plus a per-group seated/total breakdown chip row next to the seated-count summary in the Seating tab. Raised after comparing SeatMe against iPlan.co.il (a much larger Israeli event-planning platform) — see the RSVP section below for the larger gap that comparison surfaced.
+Guest notes & group stats (2026-08-18): optional per-guest note (dietary needs, high chair, wheelchair access, etc.) editable in the Guests tab, shown as a tooltip and a small black dot indicator on that guest's seat in the floor-plan map (kept visually distinct from the separate group-color dot), plus a per-group seated/total breakdown chip row, a map legend, and a "Notes" toggle that highlights every noted seat and lists them for a final pre-print sweep. Raised after comparing SeatMe against iPlan.co.il (a much larger Israeli event-planning platform) — see the RSVP section below for the larger gap that comparison surfaced.
+
+Internal usage dashboard (2026-08-18): `npm run admin:report` generates a local-only, gitignored HTML report (users, sign-up/confirmation status, events owned/shared, in-app activity) — never deployed, needs a Supabase service-role key in local `.env.local` only. Paired with an automatic activation-reminder system: an `access_log` table tracks real in-app usage (once/day/user), and a daily Vercel cron (`vercel.json` → `/api/cron/activation-reminders`) resends a sign-in link to anyone who signed up 24h+ ago and never confirmed, tracked in `activation_reminders` so nobody's reminded twice. `npm run send-activation-reminders` runs the same logic on demand for the current backlog.
 
 ## Built, not yet turned on
 
@@ -49,14 +51,24 @@ Raised 2026-08-18, alongside the Excel/PDF export work above. Instead of (or in 
 
 ## Planned: RSVP & guest communications
 
-Raised 2026-08-18 after comparing SeatMe against iPlan.co.il, a much larger Israeli event-planning platform (venue/vendor marketplace + guest tools, 200,000+ events). Their single most-emphasized feature — and the biggest functional gap for SeatMe — is closing the loop with actual guests, not just the person building the plan:
+Raised 2026-08-18 after comparing SeatMe against iPlan.co.il, a much larger Israeli event-planning platform (venue/vendor marketplace + guest tools, 200,000+ events). Their single most-emphasized feature is closing the loop with actual guests — SMS/email RSVP links, live sync back to the seating chart, and bulk guest notifications (save-the-date, arrival instructions, thank-yous).
 
-- **Guest-facing RSVP links** — an SMS or emailed link each guest can tap to confirm attendance and headcount themselves, no login required.
-- **Live sync back to the seating chart** — when a guest updates their RSVP, the seated/unseated counts and table headcounts update automatically instead of the organizer re-entering it by hand.
-- **Bulk guest notifications** — save-the-date pings, arrival/parking instructions, thank-you messages, sent to some or all of the guest list at once.
-- iPlan also sells a paid human call-center follow-up service for non-responders — worth noting as a differentiator but not something to build; a good async reminder flow (auto-resend the RSVP link after N days of silence) covers most of the same need without the staffing cost.
+**Revised after research (2026-08-18):** building a competing guest-facing RSVP *collection* system is probably the wrong move — see `AUDIT_2026-08-18.md` for the full writeup. Zola, The Knot, and Joy all bundle genuinely free RSVP collection into their wedding websites, which most couples already have in place before they find SeatMe; asking guests to RSVP twice is a real adoption cost. What isn't free anywhere, though, is syncing an already-collected RSVP into a *good* seating chart — RSVPify paywalls that specifically ($24/mo+), and Kaiplan sells the combined product directly ($20/mo or ~$100 lifetime). That's the actual gap worth targeting.
 
-Not started, not scoped. This is a real new subsystem, not a small add-on — it needs guest-facing pages that don't require an account, an SMS or email provider (e.g. Twilio, Resend/Postmark), and a data model that distinguishes "guest imported from a list" from "guest who has confirmed." Worth scoping properly (including whether it's free or part of a paid tier) before starting, similar to how the Design tier is being handled below.
+Revised direction: an **RSVP sync, not an RSVP form** — let users import the RSVP export their existing wedding website already produces (extends the guest-import work that's already built, rather than standing up guest-facing pages, SMS/email delivery, and a new unauthenticated data model). If a direct-guest touchpoint still feels worth adding later, keep it narrow: a single close-to-the-event headcount confirmation for people who already RSVP'd yes, purely for catering accuracy — not a full RSVP replacement, and not something that competes with the wedding website itself.
+
+Not started, not scoped. Revisit alongside the Design tier planning above.
+
+## From the 2026-08-18 audit
+
+A few smaller items surfaced during a full app review (bugs are tracked in `AUDIT_2026-08-18.md`, not repeated here). Feature candidates worth scoping when there's time:
+
+- **Delete or archive an event** — no way to remove one today; events accumulate on the dashboard forever.
+- **Duplicate/clone an event** — useful for recurring events (an annual gala) or planning multiple similar events at once.
+- **A real invite-as-viewer flow** — the `role` concept (owner/editor/viewer) exists in the code but the invite form only ever creates editors; pair this with the RLS fix in `AUDIT_2026-08-18.md` so read-only is actually enforced, not just hidden in the UI.
+- **Search/filter on the guest list and events dashboard** — not needed yet at current scale, but will be once users have 150+ guests or several events.
+- **Event templates** — wedding / corporate / bar-mitzvah presets with sensible default table counts and capacities, to make the first five minutes faster.
+- **Notify collaborators when invited** — invites currently grant access silently with no email to the invitee; worth reusing the activation-reminder email infrastructure for this.
 
 ## Longer-term vision
 

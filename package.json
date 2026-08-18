@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "admin:report": "node scripts/admin-report.mjs",
+    "send-activation-reminders": "node scripts/send-activation-reminders.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

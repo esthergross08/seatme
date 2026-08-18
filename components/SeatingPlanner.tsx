@@ -740,6 +740,62 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     guests.forEach((g) => (g.groupIds || []).forEach((gid) => (m[gid] = m[gid] || []).push(g.id)));
     return m;
   }, [guests]);
+
+  // ---- reconciliation: prune anything that points at a guest/group/table
+  // that no longer exists (deleted via the UI, the AI assistant, or a table
+  // capacity shrink). Runs whenever the source-of-truth lists change; only
+  // calls setState when something actually needed pruning, so this is a
+  // no-op on every normal render.
+  useEffect(() => {
+    if (readOnly) return;
+    const validGuestIds = new Set(guests.map((g) => g.id));
+    const validGroupIds = new Set(groups.map((g) => g.id));
+    const validSeatIds = new Set(seats.map((s) => s.id));
+    const validTableIds = new Set(tables.map((t) => t.id));
+
+    setSeatAssignment((prev) => {
+      let changed = false;
+      const next: SeatAssignment = {};
+      for (const [seatId, guestId] of Object.entries(prev)) {
+        if (validSeatIds.has(seatId) && guestId && validGuestIds.has(guestId)) {
+          next[seatId] = guestId;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    setConstraints((prev) => {
+      const next = prev.filter((c) => {
+        const aOk = c.aType === "group" ? validGroupIds.has(c.aId) : validGuestIds.has(c.aId);
+        const bOk = c.bType === "group" ? validGroupIds.has(c.bId) : validGuestIds.has(c.bId);
+        return aOk && bOk;
+      });
+      return next.length === prev.length ? prev : next;
+    });
+
+    setTablePositions((prev) => {
+      let changed = false;
+      const next: Record<string, { x: number; y: number }> = {};
+      for (const [tableId, pos] of Object.entries(prev)) {
+        if (validTableIds.has(tableId)) next[tableId] = pos;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+
+    setTableNameOverrides((prev) => {
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [tableId, name] of Object.entries(prev)) {
+        if (validTableIds.has(tableId)) next[tableId] = name;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [guests, groups, seats, tables, readOnly]);
+
   const seatOfGuest = useMemo(() => {
     const m: Record<string, string> = {};
     Object.entries(seatAssignment).forEach(([seatId, guestId]) => {
