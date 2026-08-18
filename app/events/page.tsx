@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import NewEventButton from "./NewEventButton";
-import SignOutButton from "./SignOutButton";
 
 const C = {
   ink: "#221F2B",
@@ -37,41 +36,31 @@ export default async function EventsPage() {
       }}
     >
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            marginBottom: 24,
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: 11,
-                letterSpacing: "0.18em",
-                textTransform: "uppercase",
-                fontWeight: 600,
-                color: C.gold,
-              }}
-            >
-              Seating Planner
-            </div>
-            <h1
-              style={{
-                fontFamily: "Georgia, serif",
-                fontSize: 28,
-                color: C.ink,
-                margin: "2px 0 0",
-              }}
-            >
-              My events
-            </h1>
-            <p style={{ fontSize: 13, color: C.muted, margin: "4px 0 0" }}>
-              {user.email}
-            </p>
+        <div style={{ marginBottom: 24 }}>
+          <div
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              fontWeight: 600,
+              color: C.gold,
+            }}
+          >
+            Seating Planner
           </div>
-          <SignOutButton />
+          <h1
+            style={{
+              fontFamily: "Georgia, serif",
+              fontSize: 28,
+              color: C.ink,
+              margin: "2px 0 0",
+            }}
+          >
+            My events
+          </h1>
+          <p style={{ fontSize: 13, color: C.muted, margin: "4px 0 0" }}>
+            {user.email}
+          </p>
         </div>
 
         <NewEventButton ownerId={user.id} />

@@ -5,7 +5,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: ["/events", "/api", "/auth"],
+      disallow: ["/events", "/home", "/account", "/api", "/auth"],
     },
     sitemap: "https://www.seatmeapp.com/sitemap.xml",
   };

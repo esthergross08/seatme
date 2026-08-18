@@ -36,18 +36,26 @@ const FEATURES = [
   },
 ];
 
-export default async function HomePage() {
+export default async function LoggedInHomePage() {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (user) redirect("/home");
+  if (!user) redirect("/");
+
+  let firstName: string | null = null;
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("first_name")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (profile?.first_name) firstName = profile.first_name;
 
   return (
     <div>
       <section
-        className="relative flex items-center justify-center text-center px-6 min-h-[560px] sm:min-h-[680px]"
+        className="relative flex items-center justify-center text-center px-6 min-h-[480px] sm:min-h-[560px]"
         style={{
           backgroundImage:
             "linear-gradient(to bottom, rgba(34,31,43,0.72), rgba(34,31,43,0.55) 45%, rgba(34,31,43,0.82)), url('https://images.unsplash.com/photo-1758810743028-6b8e150ec98f?w=2400&q=80&auto=format&fit=crop')",
@@ -57,35 +65,31 @@ export default async function HomePage() {
       >
         <div className="max-w-2xl py-16">
           <div className="text-xs tracking-[0.3em] uppercase font-semibold mb-5" style={{ color: C.goldSoft }}>
-            Seating, sorted
+            {firstName ? `Welcome back, ${firstName}` : "Welcome back"}
           </div>
           <h1
-            className="text-5xl sm:text-7xl leading-tight mb-5"
+            className="text-5xl sm:text-6xl leading-tight mb-5"
             style={{ fontFamily: "Fraunces, serif", color: "#fff" }}
           >
             Seat Me
           </h1>
           <p className="text-base sm:text-lg max-w-xl mx-auto mb-9" style={{ color: "#EDE7D8" }}>
-            A seating planner for any event — weddings, dinners, galas, reunions. Set your guest list and a few
-            rules, and get a seating chart you can trust, with a floor plan you can actually see.
+            Jump back into an event, or start a new seating chart from scratch.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4 mb-8">
             <Link
-              href="/login"
+              href="/events"
               className="inline-flex items-center text-sm font-semibold px-6 py-3 rounded-lg"
               style={{ backgroundColor: C.gold, color: "#fff", textDecoration: "none" }}
             >
-              Get started free
-            </Link>
-            <Link
-              href="/login"
-              className="inline-flex items-center text-sm font-semibold px-6 py-3 rounded-lg border"
-              style={{ borderColor: "rgba(255,255,255,0.5)", color: "#fff", textDecoration: "none" }}
-            >
-              Log in
+              Go to my events
             </Link>
           </div>
           <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs font-medium" style={{ color: "#EDE7D8" }}>
+            <Link href="/account" style={{ color: "#EDE7D8", textDecoration: "none" }}>
+              My info
+            </Link>
+            <span aria-hidden style={{ opacity: 0.5 }}>·</span>
             <Link href="/about" style={{ color: "#EDE7D8", textDecoration: "none" }}>
               About
             </Link>
@@ -105,7 +109,7 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="max-w-5xl mx-auto px-6 pb-20">
+      <section className="max-w-5xl mx-auto px-6 pb-24 pt-14">
         <div className="grid sm:grid-cols-2 gap-4">
           {FEATURES.map((f) => {
             const Icon = f.icon;
@@ -126,24 +130,6 @@ export default async function HomePage() {
               </div>
             );
           })}
-        </div>
-      </section>
-
-      <section className="max-w-5xl mx-auto px-6 pb-24 text-center">
-        <div className="p-10 rounded-2xl" style={{ backgroundColor: C.goldSoft }}>
-          <h2 className="text-2xl mb-2" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
-            Ready to stop wrestling with sticky notes?
-          </h2>
-          <p className="text-sm mb-6" style={{ color: C.ink }}>
-            It's free to get started — no credit card needed.
-          </p>
-          <Link
-            href="/login"
-            className="inline-flex items-center text-sm font-semibold px-6 py-3 rounded-lg"
-            style={{ backgroundColor: C.ink, color: "#fff", textDecoration: "none" }}
-          >
-            Create your first event
-          </Link>
         </div>
       </section>
     </div>
