@@ -16,6 +16,7 @@ import {
   Palette,
   Download,
   FileImage,
+  StickyNote,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -59,6 +60,7 @@ interface Guest {
   id: string;
   name: string;
   groupIds: string[];
+  note?: string;
 }
 interface Group {
   id: string;
@@ -649,6 +651,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const [solving, setSolving] = useState(false);
   const [justGenerated, setJustGenerated] = useState(false);
   const [seatingView, setSeatingView] = useState("map");
+  const [highlightNotes, setHighlightNotes] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [hoveredGuest, setHoveredGuest] = useState<string | null>(null);
   const [newGuestName, setNewGuestName] = useState("");
@@ -746,6 +749,22 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   }, [seatAssignment]);
   const unseatedGuests = useMemo(() => guests.filter((g) => !seatOfGuest[g.id]), [guests, seatOfGuest]);
   const seatedCount = guests.length - unseatedGuests.length;
+  const notedGuests = useMemo(() => guests.filter((g) => g.note && g.note.trim().length > 0), [guests]);
+  const notedGuestCount = notedGuests.length;
+
+  const groupStats = useMemo(() => {
+    const stats = groups.map((gr) => {
+      const members = guests.filter((g) => g.groupIds?.includes(gr.id));
+      const seated = members.filter((g) => seatOfGuest[g.id]).length;
+      return { group: gr, total: members.length, seated };
+    });
+    const ungroupedMembers = guests.filter((g) => !g.groupIds || g.groupIds.length === 0);
+    const ungrouped = {
+      total: ungroupedMembers.length,
+      seated: ungroupedMembers.filter((g) => seatOfGuest[g.id]).length,
+    };
+    return { byGroup: stats, ungrouped };
+  }, [groups, guests, seatOfGuest]);
 
   const occupiedCountByTable = useMemo(() => {
     const m: Record<string, number> = {};
@@ -859,6 +878,10 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const renameGuest = (id: string, name: string) => {
     if (readOnly) return;
     setGuests((g) => g.map((x) => (x.id === id ? { ...x, name } : x)));
+  };
+  const updateGuestNote = (id: string, note: string) => {
+    if (readOnly) return;
+    setGuests((g) => g.map((x) => (x.id === id ? { ...x, note } : x)));
   };
   const removeGuest = (id: string) => {
     if (readOnly) return;
@@ -1686,6 +1709,17 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                         })}
                       </div>
                     )}
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <StickyNote size={11} className="shrink-0" style={{ color: g.note ? C.gold : C.muted }} />
+                      <input
+                        value={g.note ?? ""}
+                        onChange={(e) => updateGuestNote(g.id, e.target.value)}
+                        disabled={readOnly}
+                        placeholder="Dietary need, high chair, wheelchair access…"
+                        className="flex-1 bg-transparent outline-none text-[11px]"
+                        style={{ color: C.muted }}
+                      />
+                    </div>
                   </div>
                 ))}
                 <div className="flex items-center gap-2 px-3 py-2">
@@ -1833,6 +1867,20 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                   <Wand2 size={15} />
                   {solving ? "Generating…" : "Auto-generate seating"}
                 </button>
+                {notedGuestCount > 0 && (
+                  <button
+                    onClick={() => setHighlightNotes((v) => !v)}
+                    title="Highlight every seat with a note, and list them for a final sweep"
+                    className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border"
+                    style={{
+                      borderColor: highlightNotes ? C.gold : C.line,
+                      color: highlightNotes ? "#fff" : C.ink,
+                      backgroundColor: highlightNotes ? C.gold : C.card,
+                    }}
+                  >
+                    <StickyNote size={14} /> Notes ({notedGuestCount})
+                  </button>
+                )}
                 <button
                   onClick={exportExcel}
                   disabled={tables.length === 0}
@@ -1914,13 +1962,56 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
               </div>
             )}
 
-            <div className="mb-5 flex items-center gap-2 text-sm" style={{ color: C.ink }}>
+            <div className="mb-2 flex items-center gap-2 text-sm" style={{ color: C.ink }}>
               <Users size={15} style={{ color: C.gold }} />
               <span>
                 <strong>{seatedCount}</strong> of {guests.length} guest{guests.length === 1 ? "" : "s"} seated
                 {unseatedGuests.length > 0 && <span style={{ color: C.muted }}> · {unseatedGuests.length} unseated</span>}
+                {notedGuestCount > 0 && (
+                  <span style={{ color: C.muted }}>
+                    {" "}
+                    · {notedGuestCount} with note{notedGuestCount === 1 ? "" : "s"}
+                  </span>
+                )}
               </span>
             </div>
+
+            {(groupStats.byGroup.length > 0 || groupStats.ungrouped.total > 0) && (
+              <div className="mb-5 flex flex-wrap gap-1.5">
+                {groupStats.byGroup.map(({ group, total, seated }) => (
+                  <div
+                    key={group.id}
+                    className="text-[11px] px-2 py-0.5 rounded-full border font-medium"
+                    style={{ borderColor: group.color, color: group.color }}
+                  >
+                    {group.name}: {seated}/{total} seated
+                  </div>
+                ))}
+                {groupStats.ungrouped.total > 0 && (
+                  <div className="text-[11px] px-2 py-0.5 rounded-full border font-medium" style={{ borderColor: C.line, color: C.muted }}>
+                    No group: {groupStats.ungrouped.seated}/{groupStats.ungrouped.total} seated
+                  </div>
+                )}
+              </div>
+            )}
+
+            {highlightNotes && notedGuests.length > 0 && (
+              <div className="mb-5 p-3 rounded-xl text-sm" style={{ backgroundColor: C.goldSoft, color: C.ink }}>
+                <div className="flex items-center gap-2 font-semibold mb-1.5" style={{ color: C.gold }}>
+                  <StickyNote size={16} />
+                  {notedGuests.length} guest{notedGuests.length === 1 ? "" : "s"} with a note — highlighted on the map below
+                </div>
+                <ul className="space-y-1 pl-1">
+                  {notedGuests.map((g) => (
+                    <li key={g.id}>
+                      <strong style={{ fontFamily: "Fraunces, serif" }}>{g.name}</strong>
+                      {seatOfGuest[g.id] ? ` (${tableById[seatsById[seatOfGuest[g.id]]?.tableId ?? ""]?.label ?? ""})` : " (unseated)"}
+                      : {g.note}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {underfilledTables.length > 0 && (
               <div className="mb-5 p-3 rounded-xl text-sm" style={{ backgroundColor: "#FBF3E4", color: C.ink }}>
@@ -1950,7 +2041,8 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       draggable={!readOnly}
                       onDragStart={(e) => handleDragStart(e, g.id)}
                       onClick={() => handlePoolClick(g.id)}
-                      className="px-3 py-1.5 rounded-lg text-sm cursor-pointer border select-none"
+                      title={g.note || undefined}
+                      className="px-3 py-1.5 rounded-lg text-sm cursor-pointer border select-none flex items-center gap-1.5"
                       style={{
                         fontFamily: "Fraunces, serif",
                         backgroundColor: picked === g.id ? C.gold : C.card,
@@ -1959,9 +2051,39 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       }}
                     >
                       {g.name}
+                      {g.note && (
+                        <StickyNote size={11} style={{ color: picked === g.id ? "#fff" : C.gold }} />
+                      )}
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {seatingView === "map" && (
+              <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px]" style={{ color: C.muted }}>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block rounded" style={{ width: 14, height: 10, border: `1.5px dashed ${C.line}` }} />
+                  Empty
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block rounded" style={{ width: 14, height: 10, border: `1.5px solid ${C.gold}`, backgroundColor: "#fff" }} />
+                  Seated
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block rounded" style={{ width: 14, height: 10, border: `1.5px solid ${C.wine}`, backgroundColor: "#fff" }} />
+                  Rule conflict
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block rounded-full" style={{ width: 7, height: 7, backgroundColor: "#000" }} />
+                  Has a note
+                </span>
+                {groups.length > 0 && (
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block rounded-full" style={{ width: 7, height: 7, backgroundColor: C.muted }} />
+                    Group color
+                  </span>
+                )}
               </div>
             )}
 
@@ -2051,8 +2173,12 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                           const x = pos.cx + pos.seatR * Math.cos(angle);
                           const y = pos.cy + pos.seatR * Math.sin(angle);
                           const guestId = seatAssignment[seatId];
-                          const guestName = guestId ? guestById[guestId]?.name : null;
+                          const guest = guestId ? guestById[guestId] : null;
+                          const guestName = guest?.name ?? null;
+                          const guestNote = guest?.note ?? null;
+                          const guestGroupColor = guest?.groupIds?.map((gid) => groupById[gid]?.color).find(Boolean) ?? null;
                           const hasViolation = flatViolations.some((v) => v.status === "violated" && (v.seatA === seatId || v.seatB === seatId));
+                          const emphasizeNote = highlightNotes && !!guestNote;
                           return (
                             <div
                               key={seatId}
@@ -2070,12 +2196,39 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                                 width: 68,
                                 height: 30,
                                 borderRadius: 4,
-                                border: `1.5px solid ${hasViolation ? C.wine : guestId ? C.gold : C.line}`,
-                                backgroundColor: picked === guestId ? C.gold : guestId ? "#fff" : "transparent",
+                                border: `${emphasizeNote ? 2.5 : 1.5}px solid ${hasViolation ? C.wine : guestId ? C.gold : C.line}`,
+                                backgroundColor: picked === guestId ? C.gold : emphasizeNote ? C.goldSoft : guestId ? "#fff" : "transparent",
                                 borderStyle: guestId ? "solid" : "dashed",
+                                boxShadow: emphasizeNote ? `0 0 0 2px ${C.goldSoft}` : "none",
                               }}
-                              title={guestName || "Empty seat"}
+                              title={guestName ? (guestNote ? `${guestName} — ${guestNote}` : guestName) : "Empty seat"}
                             >
+                              {guestGroupColor && (
+                                <span
+                                  className="absolute rounded-full"
+                                  style={{
+                                    bottom: -3,
+                                    left: -3,
+                                    width: 7,
+                                    height: 7,
+                                    backgroundColor: guestGroupColor,
+                                    border: "1px solid #fff",
+                                  }}
+                                />
+                              )}
+                              {guestNote && (
+                                <span
+                                  className="absolute rounded-full"
+                                  style={{
+                                    top: -3,
+                                    right: -3,
+                                    width: 7,
+                                    height: 7,
+                                    backgroundColor: picked === guestId ? "#fff" : "#000",
+                                    border: `1px solid ${picked === guestId ? "#000" : "#fff"}`,
+                                  }}
+                                />
+                              )}
                               <span
                                 className="text-[10px] px-1 truncate"
                                 style={{
