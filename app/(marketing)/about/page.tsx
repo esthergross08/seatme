@@ -1,3 +1,5 @@
+import FeedbackForm from "@/components/FeedbackForm";
+
 const C = {
   ink: "#221F2B",
   gold: "#A8823C",
@@ -19,20 +21,22 @@ export default function AboutPage() {
       </h1>
       <div className="text-sm leading-relaxed space-y-4" style={{ color: C.ink }}>
         <p>
-          {"[Esther — replace this paragraph with your own story. A placeholder draft: ] "}
           Seating charts have a way of turning into the most stressful part of planning an event — a tangle of
-          spreadsheets, sticky notes, and "wait, can these two actually sit together?" texts at midnight. SeatMe
-          started as a way to solve that directly: a place to lay out tables, list guests, set the rules that
-          actually matter, and let the plan build itself.
+          spreadsheets, sticky notes, and &quot;wait, can these two actually sit together?&quot; texts at midnight.
+          SeatMe started as a way to solve that directly: a place to lay out tables, list guests, set the rules
+          that actually matter, and let the plan build itself.
         </p>
         <p>
           It&apos;s built for any event — weddings, dinners, galas, reunions — not just one kind of celebration.
-          If you&apos;re the person other people hand their seating headache to, SeatMe is for you.
+          If you&apos;re the person other people hand their seating headache to, or a party organizer who hates
+          the last minute stress, SeatMe is for you.
         </p>
         <p style={{ color: C.muted }}>
-          Have a question or an idea for what SeatMe should do next? <a href="/contact" style={{ color: C.gold }}>Get in touch</a>.
+          Have a question or an idea for what SeatMe should do next?{" "}
+          <a href="/contact" style={{ color: C.gold }}>Get in touch</a> or leave us a note below.
         </p>
       </div>
+      <FeedbackForm />
     </div>
   );
 }
