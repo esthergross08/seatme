@@ -1280,6 +1280,14 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     setPicked(null);
   }
 
+  function clearAllSeats() {
+    if (readOnly) return;
+    setSeatAssignment({});
+    setActiveTableIds(null);
+    setJustGenerated(false);
+    setPicked(null);
+  }
+
   function runSolver() {
     if (readOnly) return;
     if (totalSeats < guests.length) return;
@@ -1537,6 +1545,12 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
             next[seatA] = b.id;
             next[seatB] = a.id;
             workingSeatAssignment = next;
+            break;
+          }
+          case "clear_seating": {
+            workingSeatAssignment = {};
+            setActiveTableIds(null);
+            setJustGenerated(false);
             break;
           }
           case "set_group_seating_mode": {
@@ -2175,6 +2189,15 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                 >
                   <Wand2 size={15} />
                   {solving ? "Generating…" : "Auto-generate seating"}
+                </button>
+                <button
+                  onClick={clearAllSeats}
+                  disabled={readOnly || seatedCount === 0}
+                  title="Unseat everyone and start the floor plan from scratch — keeps your guest list, groups, tables, and constraints"
+                  className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
+                  style={{ borderColor: C.line, color: C.ink }}
+                >
+                  <X size={14} /> Clear tables
                 </button>
                 {notedGuestCount > 0 && (
                   <button

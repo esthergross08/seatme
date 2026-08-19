@@ -130,11 +130,13 @@ const SYSTEM_PROMPT = `You are the seating-plan assistant inside SeatMe, a weddi
 
 You will be given the current state of the event, then the user's message. Respond conversationally in plain text. If the user's request implies one or more concrete changes to the plan, call the propose_changes tool with a list of operations describing exactly what to change. If you're just answering a question, chatting, or need clarification, do not call the tool — just reply in text.
 
+Critical: only call propose_changes when operations will contain at least one concrete, resolvable item and summary is a real, non-empty sentence. Never call the tool with an empty operations list or a blank/placeholder summary — if the request is too vague to resolve to a specific guest, table, or group (e.g. you can't tell who "them" refers to, or which table), do not call the tool at all; instead reply in plain text and ask exactly what you need to know.
+
 Guidelines:
 - Refer to guests, groups, and tables by the exact names shown in the current state.
 - A "table type" (e.g. "Family Round") is a category with a count and a capacity, used in add_table_group/update_table_group/remove_table_group. An individual "table" (e.g. "Family Round 1") is one physical table used in seat_guest. If a table type has only one table, its table label equals its table type label.
 - For add_guest or set_guest_groups, you can pass groupNames; any group name that doesn't already exist will be created automatically.
-- If the user wants the whole plan optimized or re-balanced given current constraints, use regenerate_plan rather than manually placing everyone one by one.
+- If the user wants the whole plan optimized or re-balanced given current constraints, use regenerate_plan rather than manually placing everyone one by one. If the user wants to unseat everyone and start the floor plan over from a blank slate (without deleting the guest list, groups, tables, or constraints), use clear_seating instead.
 - Every group already has an automatic seating mode ("together" by default, or "mixed") that the solver applies on its own during generate/regenerate — see the Groups list in the state above. If the user asks to seat a group together, keep a family/party together, mix a group up, or spread a group across tables, use set_group_seating_mode on that one group, then regenerate_plan if a plan already exists. Do NOT add a must/cannot constraint for every pair of guests in the group — that's what set_group_seating_mode replaces and it's already the default behavior for every group, so if a group is already "together" and the user just asks to seat it together, no operation may be needed at all beyond confirming it.
 - Only use add_constraint/set_guest_groups-style pairwise constraints for specific guest-to-guest or guest-to-group requests that aren't just "keep this whole group together" (e.g. "seat Sara next to Tom", "keep the Chen family away from the Diaz family").
 - Use set_guest_note for dietary needs, accessibility notes, or any other free-text comment/annotation on a guest ("add a note that X is allergic to nuts", "comment that Y needs a high chair"). Use set_guest_rsvp_status to mark a guest attending/pending/declined — declining automatically frees their seat. Use set_guest_meal_choice for entree/menu selections. Each guest's current note/RSVP/meal (if any) is shown in the state above.
@@ -263,7 +265,7 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 1536,
+        max_tokens: 2048,
         system: SYSTEM_PROMPT,
         tools: [TOOL],
         messages,
@@ -292,8 +294,21 @@ export async function POST(request: Request) {
   const validTypes = new Set(AGENT_OPERATION_TYPES);
   const operations = (toolBlock?.input?.operations || []).filter((op) => op && validTypes.has(op.type));
 
+  // A tool call only counts as an actual proposal if it produced at least one
+  // recognized operation. Otherwise, using its (possibly empty) summary as the
+  // reply text is misleading — it can read as "here's what I'd suggest" with
+  // nothing underneath to apply. In that case, fall back to the model's plain
+  // text if it wrote any, or an honest message asking for specifics.
+  const hasProposal = operations.length > 0;
+  const finalReply =
+    reply ||
+    (hasProposal ? toolBlock?.input?.summary : undefined) ||
+    (hasProposal
+      ? "Here's what I'd suggest."
+      : "I couldn't figure out a concrete change from that — could you tell me which guest(s), and where you'd like them seated or what should change?");
+
   return NextResponse.json({
-    reply: reply || toolBlock?.input?.summary || "Here's what I'd suggest.",
+    reply: finalReply,
     operations,
   });
 }

@@ -22,7 +22,8 @@ export type AgentOperationType =
   | "swap_guests"
   | "add_constraint"
   | "remove_constraint"
-  | "regenerate_plan";
+  | "regenerate_plan"
+  | "clear_seating";
 
 export const AGENT_OPERATION_TYPES: AgentOperationType[] = [
   "add_guest",
@@ -45,6 +46,7 @@ export const AGENT_OPERATION_TYPES: AgentOperationType[] = [
   "add_constraint",
   "remove_constraint",
   "regenerate_plan",
+  "clear_seating",
 ];
 
 export interface AgentOperation {
@@ -128,6 +130,8 @@ export function describeOperation(op: AgentOperation): string {
       return `Remove constraint between "${op.aName ?? "?"}" and "${op.bName ?? "?"}"`;
     case "regenerate_plan":
       return "Regenerate the seating plan";
+    case "clear_seating":
+      return "Clear all tables — unseat everyone";
     default:
       return "Unknown change";
   }
