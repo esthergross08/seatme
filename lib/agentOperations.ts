@@ -7,6 +7,9 @@ export type AgentOperationType =
   | "remove_guest"
   | "rename_guest"
   | "set_guest_groups"
+  | "set_guest_note"
+  | "set_guest_rsvp_status"
+  | "set_guest_meal_choice"
   | "add_group"
   | "rename_group"
   | "remove_group"
@@ -25,6 +28,9 @@ export const AGENT_OPERATION_TYPES: AgentOperationType[] = [
   "remove_guest",
   "rename_guest",
   "set_guest_groups",
+  "set_guest_note",
+  "set_guest_rsvp_status",
+  "set_guest_meal_choice",
   "add_group",
   "rename_group",
   "remove_group",
@@ -46,6 +52,9 @@ export interface AgentOperation {
   guestName?: string;
   groupName?: string;
   groupNames?: string[];
+  note?: string;
+  rsvpStatus?: "attending" | "pending" | "declined";
+  mealChoice?: string;
   tableGroupLabel?: string;
   newTableGroupLabel?: string;
   count?: number;
@@ -76,6 +85,16 @@ export function describeOperation(op: AgentOperation): string {
       return `Rename "${op.guestName ?? "?"}" to "${op.newName ?? "?"}"`;
     case "set_guest_groups":
       return `Set "${op.guestName ?? "?"}"'s groups to: ${op.groupNames?.length ? op.groupNames.join(", ") : "(none)"}`;
+    case "set_guest_note":
+      return op.note?.trim()
+        ? `Set note for "${op.guestName ?? "?"}": "${op.note.trim()}"`
+        : `Clear note for "${op.guestName ?? "?"}"`;
+    case "set_guest_rsvp_status":
+      return `Set "${op.guestName ?? "?"}"'s RSVP status to ${op.rsvpStatus ?? "?"}`;
+    case "set_guest_meal_choice":
+      return op.mealChoice?.trim()
+        ? `Set "${op.guestName ?? "?"}"'s meal choice to "${op.mealChoice.trim()}"`
+        : `Clear "${op.guestName ?? "?"}"'s meal choice`;
     case "add_group":
       return `Add group "${op.name ?? "?"}"`;
     case "rename_group":

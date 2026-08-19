@@ -14,6 +14,9 @@ interface GuestIn {
   id: string;
   name: string;
   groupIds: string[];
+  note?: string;
+  rsvpStatus?: "attending" | "pending" | "declined";
+  mealChoice?: string;
 }
 interface GroupIn {
   id: string;
@@ -80,7 +83,11 @@ function buildContext(state: EventState): string {
   const guestLines = (state.guests || []).map((g) => {
     const groupNames = (g.groupIds || []).map((gid) => groupById[gid]).filter(Boolean);
     const seat = guestTableLabel[g.id] ? `seated at ${guestTableLabel[g.id]}` : "unseated";
-    return `- ${g.name}${groupNames.length ? ` [${groupNames.join(", ")}]` : ""} — ${seat}`;
+    const extras: string[] = [];
+    if (g.rsvpStatus) extras.push(`RSVP: ${g.rsvpStatus}`);
+    if (g.mealChoice) extras.push(`meal: ${g.mealChoice}`);
+    if (g.note) extras.push(`note: ${g.note}`);
+    return `- ${g.name}${groupNames.length ? ` [${groupNames.join(", ")}]` : ""} — ${seat}${extras.length ? ` (${extras.join("; ")})` : ""}`;
   });
 
   const tableLines = tables.map((t) => `- ${t.label}: ${seatCountByTable[t.id] || 0}/${t.capacity} seats filled`);
@@ -122,6 +129,7 @@ Guidelines:
 - A "table type" (e.g. "Family Round") is a category with a count and a capacity, used in add_table_group/update_table_group/remove_table_group. An individual "table" (e.g. "Family Round 1") is one physical table used in seat_guest. If a table type has only one table, its table label equals its table type label.
 - For add_guest or set_guest_groups, you can pass groupNames; any group name that doesn't already exist will be created automatically.
 - If the user wants the whole plan optimized or re-balanced given current constraints, use regenerate_plan rather than manually placing everyone one by one.
+- Use set_guest_note for dietary needs, accessibility notes, or any other free-text comment/annotation on a guest ("add a note that X is allergic to nuts", "comment that Y needs a high chair"). Use set_guest_rsvp_status to mark a guest attending/pending/declined — declining automatically frees their seat. Use set_guest_meal_choice for entree/menu selections. Each guest's current note/RSVP/meal (if any) is shown in the state above.
 - Never invent guest, group, or table names that weren't mentioned by the user or shown in the current state, except for genuinely new entities the user is explicitly asking you to create.
 - Keep your text reply short — one or two sentences. The operations list itself will be shown to the user as a detailed, reviewable checklist, so don't repeat every detail in prose.
 - Constraints are between two "sides", each either a specific guest or a whole group; "must" means seated at the same table (adjacent if both individual guests), "cannot" means must not be.`;
@@ -147,6 +155,19 @@ const TOOL = {
               type: "array",
               items: { type: "string" },
               description: "Group names for add_guest or set_guest_groups; unrecognized names are created automatically",
+            },
+            note: {
+              type: "string",
+              description: "Free-text note for set_guest_note (dietary need, high chair, wheelchair access, etc.); pass an empty string to clear it",
+            },
+            rsvpStatus: {
+              type: "string",
+              enum: ["attending", "pending", "declined"],
+              description: "For set_guest_rsvp_status. Marking a guest declined automatically frees their seat.",
+            },
+            mealChoice: {
+              type: "string",
+              description: "Free-text meal/entree choice for set_guest_meal_choice; pass an empty string to clear it",
             },
             tableGroupLabel: { type: "string", description: "Table type label, for add/update/remove_table_group" },
             newTableGroupLabel: { type: "string", description: "New label, for update_table_group" },

@@ -1373,6 +1373,31 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
             workingGuests = workingGuests.map((x) => (x.id === g.id ? { ...x, groupIds } : x));
             break;
           }
+          case "set_guest_note": {
+            const g = findGuest(op.guestName);
+            if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
+            workingGuests = workingGuests.map((x) => (x.id === g.id ? { ...x, note: op.note ?? "" } : x));
+            break;
+          }
+          case "set_guest_rsvp_status": {
+            const g = findGuest(op.guestName);
+            if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
+            if (!op.rsvpStatus) throw new Error("Missing RSVP status.");
+            workingGuests = workingGuests.map((x) => (x.id === g.id ? { ...x, rsvpStatus: op.rsvpStatus } : x));
+            if (op.rsvpStatus === "declined") {
+              const next = { ...workingSeatAssignment };
+              const fromSeatId = Object.keys(next).find((sid) => next[sid] === g.id);
+              if (fromSeatId) delete next[fromSeatId];
+              workingSeatAssignment = next;
+            }
+            break;
+          }
+          case "set_guest_meal_choice": {
+            const g = findGuest(op.guestName);
+            if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
+            workingGuests = workingGuests.map((x) => (x.id === g.id ? { ...x, mealChoice: op.mealChoice ?? "" } : x));
+            break;
+          }
           case "add_group": {
             const name = (op.name || "").trim();
             if (!name) throw new Error("Missing name.");

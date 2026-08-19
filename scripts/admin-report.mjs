@@ -90,6 +90,84 @@ function fmtDate(value) {
   return d.toISOString().slice(0, 10);
 }
 
+function loadHistory(historyPath) {
+  if (!fs.existsSync(historyPath)) return [];
+  try {
+    const raw = fs.readFileSync(historyPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(historyPath, history) {
+  fs.writeFileSync(historyPath, JSON.stringify(history, null, 2), "utf8");
+}
+
+// Hand-rolled SVG line chart — no external chart library, so this still
+// renders correctly when the report is opened offline via a file:// URL.
+function buildTrendChart(history) {
+  const W = 1020;
+  const H = 260;
+  const padL = 40;
+  const padR = 16;
+  const padT = 16;
+  const padB = 28;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const series = [
+    { key: "totalUsers", label: "Total users", color: "var(--gold)" },
+    { key: "activeUsers", label: "Active users (7d)", color: "var(--sage)" },
+    { key: "totalEvents", label: "Total events", color: "var(--wine)" },
+  ];
+
+  const maxVal = Math.max(4, ...history.flatMap((h) => series.map((s) => h[s.key] ?? 0))) * 1.15;
+
+  const xAt = (i) => padL + (history.length === 1 ? plotW / 2 : (i / (history.length - 1)) * plotW);
+  const yAt = (v) => padT + plotH - (v / maxVal) * plotH;
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const y = padT + plotH * (1 - f);
+    const val = Math.round(maxVal * f);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--line)" stroke-width="1" />
+      <text x="${padL - 8}" y="${y + 4}" text-anchor="end" font-size="10" fill="var(--muted)">${val}</text>`;
+  }).join("");
+
+  const labelStep = Math.max(1, Math.ceil(history.length / 8));
+  const xLabels = history
+    .map((h, i) => (i % labelStep === 0 || i === history.length - 1
+      ? `<text x="${xAt(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--muted)">${h.date.slice(5)}</text>`
+      : ""))
+    .join("");
+
+  const lines = series
+    .map((s) => {
+      const points = history.map((h, i) => `${xAt(i)},${yAt(h[s.key] ?? 0)}`).join(" ");
+      const dots = history
+        .map((h, i) => `<circle cx="${xAt(i)}" cy="${yAt(h[s.key] ?? 0)}" r="3" fill="${s.color}"><title>${esc(h.date)} — ${s.label}: ${h[s.key] ?? 0}</title></circle>`)
+        .join("");
+      return `<polyline points="${points}" fill="none" stroke="${s.color}" stroke-width="2" /> ${dots}`;
+    })
+    .join("");
+
+  const legend = series
+    .map((s, i) => `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;">
+      <span style="width:10px;height:10px;border-radius:50%;background:${s.color};display:inline-block;"></span>
+      <span style="font-size:12px;color:var(--muted);">${esc(s.label)}</span>
+    </span>`)
+    .join("");
+
+  return `
+    <div class="chart-legend">${legend}</div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img">
+      ${gridLines}
+      ${lines}
+      ${xLabels}
+    </svg>`;
+}
+
 function esc(str) {
   return String(str ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;",
@@ -214,6 +292,20 @@ async function main() {
   const importsWithRsvp = importRows.filter((r) => r.had_rsvp_data).length;
   const importsWithMeal = importRows.filter((r) => r.had_meal_data).length;
   const totalGuestsImported = importRows.reduce((sum, r) => sum + (r.guest_count || 0), 0);
+
+  // Trend history: one data point per day, upserted so re-running the report
+  // multiple times in a day just updates today's numbers instead of duplicating.
+  const outDir = path.join(process.cwd(), "reports");
+  fs.mkdirSync(outDir, { recursive: true });
+  const historyPath = path.join(outDir, "admin-history.json");
+  const history = loadHistory(historyPath);
+  const today = fmtDate(new Date());
+  const todayEntry = { date: today, totalUsers, activeUsers: activeInApp7, totalEvents };
+  const existingIdx = history.findIndex((h) => h.date === today);
+  if (existingIdx >= 0) history[existingIdx] = todayEntry;
+  else history.push(todayEntry);
+  history.sort((a, b) => a.date.localeCompare(b.date));
+  saveHistory(historyPath, history);
 
   const generatedAt = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
 
@@ -342,6 +434,19 @@ async function main() {
   td.sage { color: var(--sage); font-weight: 600; }
   td.wine { color: var(--wine); font-weight: 600; }
   .table-scroll { overflow-x: auto; }
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 18px 6px;
+    margin-bottom: 24px;
+  }
+  .chart-title {
+    font-family: 'Fraunces', serif;
+    font-size: 16px;
+    margin-bottom: 8px;
+  }
+  .chart-legend { margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -364,6 +469,15 @@ async function main() {
       ${statCard("Guests imported (total)", totalGuestsImported)}
       ${statCard("Imports with RSVP data", importsWithRsvp)}
       ${statCard("Imports with meal data", importsWithMeal)}
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title">Trend — total users, active users (7d), total events</div>
+      ${
+        history.length < 2
+          ? `<div class="note" style="margin-bottom:0;">Only ${history.length} day${history.length === 1 ? "" : "s"} of data so far — run this report again on a later day to start seeing a trend line. Each run records one data point for today (re-running the same day just updates it).</div>`
+          : buildTrendChart(history)
+      }
     </div>
 
     ${
@@ -398,8 +512,6 @@ async function main() {
 </body>
 </html>`;
 
-  const outDir = path.join(process.cwd(), "reports");
-  fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, "admin-report.html");
   fs.writeFileSync(outPath, html, "utf8");
 
