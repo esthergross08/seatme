@@ -13,6 +13,7 @@ export type AgentOperationType =
   | "add_group"
   | "rename_group"
   | "remove_group"
+  | "set_group_seating_mode"
   | "add_table_group"
   | "update_table_group"
   | "remove_table_group"
@@ -34,6 +35,7 @@ export const AGENT_OPERATION_TYPES: AgentOperationType[] = [
   "add_group",
   "rename_group",
   "remove_group",
+  "set_group_seating_mode",
   "add_table_group",
   "update_table_group",
   "remove_table_group",
@@ -55,6 +57,7 @@ export interface AgentOperation {
   note?: string;
   rsvpStatus?: "attending" | "pending" | "declined";
   mealChoice?: string;
+  seatingMode?: "together" | "mixed";
   tableGroupLabel?: string;
   newTableGroupLabel?: string;
   count?: number;
@@ -101,6 +104,10 @@ export function describeOperation(op: AgentOperation): string {
       return `Rename group "${op.groupName ?? "?"}" to "${op.newName ?? "?"}"`;
     case "remove_group":
       return `Remove group "${op.groupName ?? "?"}"`;
+    case "set_group_seating_mode":
+      return op.seatingMode === "mixed"
+        ? `Mix "${op.groupName ?? "?"}" across different tables`
+        : `Seat "${op.groupName ?? "?"}" together by default`;
     case "add_table_group":
       return `Add ${op.count ?? "?"} × "${op.tableGroupLabel ?? "?"}" table${(op.count ?? 0) === 1 ? "" : "s"} (seats ${op.capacity ?? "?"} each)`;
     case "update_table_group":

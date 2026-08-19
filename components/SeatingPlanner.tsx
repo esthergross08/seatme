@@ -17,6 +17,8 @@ import {
   Download,
   FileImage,
   StickyNote,
+  Link2,
+  Shuffle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -66,10 +68,15 @@ interface Guest {
   rsvpStatus?: RsvpStatus;
   mealChoice?: string;
 }
+type GroupSeatingMode = "together" | "mixed";
 interface Group {
   id: string;
   name: string;
   color: string;
+  // Undefined means "together" — the default, and what most people mean when
+  // they tag a group at all. "mixed" is an explicit opt-in to deliberately
+  // spread that group's members across different tables instead.
+  seatingMode?: GroupSeatingMode;
 }
 interface Constraint {
   id: string;
@@ -251,6 +258,28 @@ function expandAllConstraints(constraints: Constraint[], guestsByGroupId: Record
   return constraints.flatMap((c) => expandConstraint(c, guestsByGroupId));
 }
 
+// Automatic, default group cohesion: every group's members are nudged toward
+// (or, for "mixed" groups, away from) sitting at the same table without the
+// user or the AI assistant needing to add a manual constraint for every pair.
+// These are kept separate from explicit constraints (a lower cost weight in
+// the solver, and never fed into the constraint checklist/violation UI) so an
+// explicit user "cannot" always overrides the automatic default, and a large
+// group that can't fully fit at one table doesn't show up as a false alarm.
+function buildAutoGroupPairs(groups: Group[], guestsByGroupId: Record<string, string[]>): FlatPair[] {
+  const pairs: FlatPair[] = [];
+  groups.forEach((g) => {
+    const memberIds = guestsByGroupId[g.id] || [];
+    if (memberIds.length < 2) return;
+    const type: "must" | "cannot" = g.seatingMode === "mixed" ? "cannot" : "must";
+    memberIds.forEach((a) => {
+      memberIds.forEach((b) => {
+        if (a !== b) pairs.push({ parentId: `auto-${g.id}`, aId: a, bId: b, type, mode: "table" });
+      });
+    });
+  });
+  return pairs;
+}
+
 // ---------- violation computation (operates on flat guest-guest pairs) ----------
 function computeFlatViolations(
   flatPairs: FlatPair[],
@@ -297,7 +326,8 @@ function solveSeating(
   flatPairs: FlatPair[],
   seatsById: Record<string, Seat>,
   fillMode: FillMode = "spread",
-  previousAssignment: SeatAssignment = {}
+  previousAssignment: SeatAssignment = {},
+  autoGroupPairs: FlatPair[] = []
 ): SeatAssignment {
   const n = seats.length;
   if (n === 0 || guestIds.length === 0) return {};
@@ -333,6 +363,19 @@ function solveSeating(
       const linked = p.mode === "table" ? sameTable : sameTable && areAdjacent(sa.seatIdx, sb.seatIdx, sa.capacity);
       if (p.type === "must" && !linked) total += 12;
       if (p.type === "cannot" && linked) total += 12;
+    }
+    // Automatic group cohesion: same idea, much lower weight, so it never
+    // overrides an explicit user constraint but still meaningfully steers
+    // placement by default (well above the spread/minimize-changes nudges).
+    for (const p of autoGroupPairs) {
+      const pa = guestPos[p.aId];
+      const pb = guestPos[p.bId];
+      if (pa === undefined || pb === undefined) continue;
+      const sa = seats[pa];
+      const sb = seats[pb];
+      const linked = sa.tableId === sb.tableId;
+      if (p.type === "must" && !linked) total += 3;
+      if (p.type === "cannot" && linked) total += 3;
     }
     if (spread) {
       const tableCounts: Record<string, number> = {};
@@ -827,6 +870,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   }, [visibleTables, occupiedCountByTable, seatedCount]);
 
   const flatPairs = useMemo(() => expandAllConstraints(constraints, guestsByGroupId), [constraints, guestsByGroupId]);
+  const autoGroupPairs = useMemo(() => buildAutoGroupPairs(groups, guestsByGroupId), [groups, guestsByGroupId]);
   const flatViolations = useMemo(() => computeFlatViolations(flatPairs, seatAssignment, seatsById), [flatPairs, seatAssignment, seatsById]);
   const constraintStatuses = useMemo(() => aggregateConstraintStatus(constraints, flatViolations), [constraints, flatViolations]);
   const violatedCount = Object.values(constraintStatuses).filter((s) => s === "violated").length;
@@ -1152,6 +1196,12 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     setGuests((gs) => gs.map((g) => ({ ...g, groupIds: g.groupIds.filter((gid) => gid !== id) })));
     setConstraints((cs) => cs.filter((c) => !((c.aType === "group" && c.aId === id) || (c.bType === "group" && c.bId === id))));
   };
+  const toggleGroupSeatingMode = (id: string) => {
+    if (readOnly) return;
+    setGroups((gs) =>
+      gs.map((g) => (g.id === id ? { ...g, seatingMode: g.seatingMode === "mixed" ? "together" : "mixed" } : g))
+    );
+  };
 
   // ---- constraint handlers ----
   const addConstraint = () => {
@@ -1249,7 +1299,8 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
         flatPairs,
         poolSeatsById,
         fillMode,
-        minimizeChanges ? seatAssignment : {}
+        minimizeChanges ? seatAssignment : {},
+        autoGroupPairs
       );
       setSeatAssignment(result);
       setActiveTableIds(new Set(chosenIds));
@@ -1488,6 +1539,13 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
             workingSeatAssignment = next;
             break;
           }
+          case "set_group_seating_mode": {
+            const g = findGroup(op.groupName);
+            if (!g) throw new Error(`Couldn't find group "${op.groupName}".`);
+            if (op.seatingMode !== "together" && op.seatingMode !== "mixed") throw new Error("Missing seating mode.");
+            workingGroups = workingGroups.map((x) => (x.id === g.id ? { ...x, seatingMode: op.seatingMode } : x));
+            break;
+          }
           case "add_constraint": {
             const aType: "guest" | "group" = op.aType === "group" ? "group" : "guest";
             const bType: "guest" | "group" = op.bType === "group" ? "group" : "guest";
@@ -1536,13 +1594,15 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
               (g.groupIds || []).forEach((gid) => (workingGuestsByGroupId[gid] = workingGuestsByGroupId[gid] || []).push(g.id))
             );
             const workingFlatPairs = expandAllConstraints(workingConstraints, workingGuestsByGroupId);
+            const workingAutoGroupPairs = buildAutoGroupPairs(workingGroups, workingGuestsByGroupId);
             workingSeatAssignment = solveSeating(
               poolSeats,
               workingGuests.map((g) => g.id),
               workingFlatPairs,
               poolSeatsById,
               fillMode,
-              minimizeChanges ? workingSeatAssignment : {}
+              minimizeChanges ? workingSeatAssignment : {},
+              workingAutoGroupPairs
             );
             setActiveTableIds(new Set(poolTables.map((t) => t.id)));
             setShowAllTables(false);
@@ -1852,26 +1912,44 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                 </div>
               )}
 
-              <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                {groups.map((gr) => (
-                  <div key={gr.id} className="flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full text-xs" style={{ backgroundColor: gr.color, color: "#fff" }}>
-                    <input
-                      value={gr.name}
-                      onChange={(e) => renameGroup(gr.id, e.target.value)}
-                      disabled={readOnly}
-                      className="bg-transparent outline-none"
-                      style={{ color: "#fff", width: `${Math.max(60, gr.name.length * 6.5)}px` }}
-                    />
-                    {!readOnly && (
-                      <button onClick={() => removeGroup(gr.id)} className="p-0.5 rounded-full hover:bg-black/10">
-                        <X size={10} />
+              <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                {groups.map((gr) => {
+                  const mixed = gr.seatingMode === "mixed";
+                  return (
+                    <div key={gr.id} className="flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full text-xs" style={{ backgroundColor: gr.color, color: "#fff" }}>
+                      <input
+                        value={gr.name}
+                        onChange={(e) => renameGroup(gr.id, e.target.value)}
+                        disabled={readOnly}
+                        className="bg-transparent outline-none"
+                        style={{ color: "#fff", width: `${Math.max(60, gr.name.length * 6.5)}px` }}
+                      />
+                      <button
+                        onClick={() => toggleGroupSeatingMode(gr.id)}
+                        disabled={readOnly}
+                        title={
+                          mixed
+                            ? "Mixed — deliberately spread across tables. Click to seat together instead."
+                            : "Seated together by default. Click to mix this group across tables instead."
+                        }
+                        className="p-0.5 rounded-full hover:bg-black/10 disabled:opacity-60"
+                      >
+                        {mixed ? <Shuffle size={10} /> : <Link2 size={10} />}
                       </button>
-                    )}
-                  </div>
-                ))}
+                      {!readOnly && (
+                        <button onClick={() => removeGroup(gr.id)} className="p-0.5 rounded-full hover:bg-black/10">
+                          <X size={10} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
                 <button onClick={addGroup} disabled={readOnly} className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full disabled:opacity-40" style={{ color: C.gold, border: `1px dashed ${C.gold}` }}>
                   <Plus size={11} /> Group
                 </button>
+              </div>
+              <div className="mb-3 text-[11px]" style={{ color: C.muted }}>
+                <Link2 size={10} className="inline mr-1 -mt-0.5" /> together (default) · <Shuffle size={10} className="inline mr-1 -mt-0.5" /> mixed — click a group's icon to switch. Applied automatically on generate/regenerate.
               </div>
 
               <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.line, backgroundColor: C.card }}>

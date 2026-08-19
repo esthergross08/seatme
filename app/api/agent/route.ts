@@ -21,6 +21,7 @@ interface GuestIn {
 interface GroupIn {
   id: string;
   name: string;
+  seatingMode?: "together" | "mixed";
 }
 interface ConstraintIn {
   id: string;
@@ -101,11 +102,16 @@ function buildContext(state: EventState): string {
     (c) => `- ${nameOf(c.aType, c.aId)} ${c.type === "must" ? "must sit with" : "cannot sit with"} ${nameOf(c.bType, c.bId)}`
   );
 
+  const groupLines = (state.groups || []).map(
+    (g) => `- ${g.name} (${g.seatingMode === "mixed" ? "mixed — deliberately spread across tables" : "together — seated at the same table by default"})`
+  );
+
   return [
     `Guests (${state.guests?.length ?? 0}):`,
     guestLines.join("\n") || "(none)",
     "",
-    `Groups: ${(state.groups || []).map((g) => g.name).join(", ") || "(none)"}`,
+    "Groups (each has an automatic seating mode already applied on generate/regenerate — no manual constraint needed):",
+    groupLines.join("\n") || "(none)",
     "",
     "Table types (category, used for add/update/remove_table_group):",
     tableGroupLines.join("\n") || "(none)",
@@ -129,6 +135,8 @@ Guidelines:
 - A "table type" (e.g. "Family Round") is a category with a count and a capacity, used in add_table_group/update_table_group/remove_table_group. An individual "table" (e.g. "Family Round 1") is one physical table used in seat_guest. If a table type has only one table, its table label equals its table type label.
 - For add_guest or set_guest_groups, you can pass groupNames; any group name that doesn't already exist will be created automatically.
 - If the user wants the whole plan optimized or re-balanced given current constraints, use regenerate_plan rather than manually placing everyone one by one.
+- Every group already has an automatic seating mode ("together" by default, or "mixed") that the solver applies on its own during generate/regenerate — see the Groups list in the state above. If the user asks to seat a group together, keep a family/party together, mix a group up, or spread a group across tables, use set_group_seating_mode on that one group, then regenerate_plan if a plan already exists. Do NOT add a must/cannot constraint for every pair of guests in the group — that's what set_group_seating_mode replaces and it's already the default behavior for every group, so if a group is already "together" and the user just asks to seat it together, no operation may be needed at all beyond confirming it.
+- Only use add_constraint/set_guest_groups-style pairwise constraints for specific guest-to-guest or guest-to-group requests that aren't just "keep this whole group together" (e.g. "seat Sara next to Tom", "keep the Chen family away from the Diaz family").
 - Use set_guest_note for dietary needs, accessibility notes, or any other free-text comment/annotation on a guest ("add a note that X is allergic to nuts", "comment that Y needs a high chair"). Use set_guest_rsvp_status to mark a guest attending/pending/declined — declining automatically frees their seat. Use set_guest_meal_choice for entree/menu selections. Each guest's current note/RSVP/meal (if any) is shown in the state above.
 - Never invent guest, group, or table names that weren't mentioned by the user or shown in the current state, except for genuinely new entities the user is explicitly asking you to create.
 - Keep your text reply short — one or two sentences. The operations list itself will be shown to the user as a detailed, reviewable checklist, so don't repeat every detail in prose.
@@ -168,6 +176,11 @@ const TOOL = {
             mealChoice: {
               type: "string",
               description: "Free-text meal/entree choice for set_guest_meal_choice; pass an empty string to clear it",
+            },
+            seatingMode: {
+              type: "string",
+              enum: ["together", "mixed"],
+              description: "For set_group_seating_mode. 'together' (the default) seats the whole group at the same table automatically on generate/regenerate; 'mixed' deliberately spreads them across different tables. Applies to every current and future member of the group — do not also add per-guest must/cannot constraints for this.",
             },
             tableGroupLabel: { type: "string", description: "Table type label, for add/update/remove_table_group" },
             newTableGroupLabel: { type: "string", description: "New label, for update_table_group" },
