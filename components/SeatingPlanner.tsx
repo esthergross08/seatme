@@ -56,11 +56,15 @@ interface TableGroup {
   capacity: number | "";
   shape?: TableShape;
 }
+type RsvpStatus = "attending" | "pending" | "declined";
 interface Guest {
   id: string;
   name: string;
   groupIds: string[];
   note?: string;
+  email?: string;
+  rsvpStatus?: RsvpStatus;
+  mealChoice?: string;
 }
 interface Group {
   id: string;
@@ -101,48 +105,6 @@ interface SeatingPlannerProps {
   initialData: PlannerData | null;
   role: Role;
   members: Member[];
-}
-
-// ---------- seed data (used only for a brand-new, empty event) ----------
-function makeSeedData() {
-  const seedTableGroups: TableGroup[] = [
-    { id: genId(), label: "Family Round", count: 2, capacity: 8, shape: "round" },
-    { id: genId(), label: "Sweetheart Table", count: 1, capacity: 2, shape: "round" },
-  ];
-  const seedGuestNames = [
-    "Ava Chen", "Marcus Webb", "Priya Anand", "Noah Fischer", "Ines Duarte",
-    "Leo Zhang", "Sofia Marchetti", "Jonah Reyes", "Clara Wynn", "Theo Baptiste",
-  ];
-  const seedGroups: Group[] = [
-    { id: genId(), name: "Groom's University Friends", color: GROUP_COLORS[0] },
-    { id: genId(), name: "Bride's Mom's Family", color: GROUP_COLORS[1] },
-  ];
-  const seedGuests: Guest[] = seedGuestNames.map((name) => ({ id: genId(), name, groupIds: [] }));
-  [1, 5, 7].forEach((i) => seedGuests[i].groupIds.push(seedGroups[0].id));
-  [6, 8, 9].forEach((i) => seedGuests[i].groupIds.push(seedGroups[1].id));
-
-  const seedConstraints: Constraint[] = [
-    { aType: "guest", a: 0, bType: "guest", b: 1, type: "must" },
-    { aType: "guest", a: 1, bType: "guest", b: 5, type: "cannot" },
-    { aType: "guest", a: 2, bType: "guest", b: 3, type: "must" },
-  ].map((c) => ({
-    id: genId(),
-    aType: c.aType as "guest",
-    aId: seedGuests[c.a].id,
-    bType: c.bType as "guest",
-    bId: seedGuests[c.b].id,
-    type: c.type as "must" | "cannot",
-  }));
-  seedConstraints.push({
-    id: genId(),
-    aType: "group",
-    aId: seedGroups[0].id,
-    bType: "group",
-    bId: seedGroups[1].id,
-    type: "cannot",
-  });
-
-  return { seedTableGroups, seedGuests, seedGroups, seedConstraints };
 }
 
 // ---------- geometry helpers ----------
@@ -522,6 +484,8 @@ const FIRST_NAME_HEADERS = ["first name", "first", "given name"];
 const LAST_NAME_HEADERS = ["last name", "last", "surname", "family name"];
 const GROUP_HEADERS = ["group", "groups", "table group", "party", "category", "tag", "tags", "side", "household"];
 const STATUS_HEADERS = ["rsvp", "rsvp status", "status", "response", "attending", "invite status"];
+const EMAIL_HEADERS = ["email", "email address", "e-mail", "e-mail address"];
+const MEAL_HEADERS = ["meal", "meal choice", "entree", "entree choice", "menu", "menu choice", "food choice", "meal selection"];
 const NOT_ATTENDING_VALUES = [
   "declined",
   "decline",
@@ -533,18 +497,37 @@ const NOT_ATTENDING_VALUES = [
   "cancelled",
   "canceled",
 ];
+const ATTENDING_VALUES = ["yes", "attending", "confirmed", "going", "accepted", "accept", "y"];
+
+function statusFromCell(cell: string): RsvpStatus | undefined {
+  const v = cell.trim().toLowerCase();
+  if (!v) return undefined;
+  if (NOT_ATTENDING_VALUES.includes(v)) return "declined";
+  if (ATTENDING_VALUES.includes(v)) return "attending";
+  return "pending"; // recognized column, unrecognized value (e.g. "maybe", "tentative") — don't assume either way
+}
 
 function parseGuestRows(raw: unknown[][]) {
-  const guests: { name: string; groupNames: string[] }[] = [];
+  const guests: {
+    name: string;
+    groupNames: string[];
+    email?: string;
+    rsvpStatus?: RsvpStatus;
+    mealChoice?: string;
+  }[] = [];
   const groupNamesFound = new Set<string>();
-  let skippedNotAttending = 0;
-  if (!raw || raw.length === 0) return { guests, groupNamesFound, skippedNotAttending };
+  let declinedCount = 0;
+  let withRsvpData = 0;
+  let withMealData = 0;
+  if (!raw || raw.length === 0) return { guests, groupNamesFound, declinedCount, withRsvpData, withMealData };
   const header = (raw[0] || []).map((h) => String(h ?? "").trim().toLowerCase());
   const nameIdx = header.findIndex((h) => NAME_HEADERS.includes(h));
   const firstIdx = header.findIndex((h) => FIRST_NAME_HEADERS.includes(h));
   const lastIdx = header.findIndex((h) => LAST_NAME_HEADERS.includes(h));
   const groupIdx = header.findIndex((h) => GROUP_HEADERS.includes(h));
   const statusIdx = header.findIndex((h) => STATUS_HEADERS.includes(h));
+  const emailIdx = header.findIndex((h) => EMAIL_HEADERS.includes(h));
+  const mealIdx = header.findIndex((h) => MEAL_HEADERS.includes(h));
   const hasHeader = nameIdx !== -1 || firstIdx !== -1 || lastIdx !== -1;
   const startRow = hasHeader ? 1 : 0;
   const nameCol = hasHeader ? nameIdx : 0;
@@ -562,13 +545,16 @@ function parseGuestRows(raw: unknown[][]) {
     }
     if (!name) continue;
 
+    let rsvpStatus: RsvpStatus | undefined;
     if (statusIdx >= 0) {
-      const status = String(row[statusIdx] ?? "").trim().toLowerCase();
-      if (NOT_ATTENDING_VALUES.includes(status)) {
-        skippedNotAttending++;
-        continue;
-      }
+      rsvpStatus = statusFromCell(String(row[statusIdx] ?? ""));
+      if (rsvpStatus) withRsvpData++;
+      if (rsvpStatus === "declined") declinedCount++;
     }
+
+    const email = emailIdx >= 0 ? String(row[emailIdx] ?? "").trim().toLowerCase() || undefined : undefined;
+    const mealChoice = mealIdx >= 0 ? String(row[mealIdx] ?? "").trim() || undefined : undefined;
+    if (mealChoice) withMealData++;
 
     let groupNames: string[] = [];
     if (groupCol >= 0) {
@@ -576,9 +562,9 @@ function parseGuestRows(raw: unknown[][]) {
       if (cell) groupNames = cell.split(/[,;/]+/).map((s) => s.trim()).filter(Boolean);
     }
     groupNames.forEach((gn) => groupNamesFound.add(gn));
-    guests.push({ name, groupNames });
+    guests.push({ name, groupNames, email, rsvpStatus, mealChoice });
   }
-  return { guests, groupNamesFound, skippedNotAttending };
+  return { guests, groupNamesFound, declinedCount, withRsvpData, withMealData };
 }
 
 // ---------- small UI atoms ----------
@@ -628,26 +614,14 @@ function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
 // ---------- main component ----------
 export default function SeatingPlanner({ eventId, initialName, initialData, role, members }: SeatingPlannerProps) {
   const readOnly = role === "viewer";
-  const seeds = useMemo(() => makeSeedData(), []);
-  const hasSavedData = !!(
-    initialData &&
-    ((initialData.guests && initialData.guests.length > 0) ||
-      (initialData.tableGroups && initialData.tableGroups.length > 0))
-  );
 
   const [eventName, setEventName] = useState(initialName || "Untitled event");
   const [tab, setTab] = useState("setup");
-  const [tableGroups, setTableGroups] = useState<TableGroup[]>(
-    hasSavedData ? initialData!.tableGroups ?? [] : seeds.seedTableGroups
-  );
-  const [guests, setGuests] = useState<Guest[]>(hasSavedData ? initialData!.guests ?? [] : seeds.seedGuests);
-  const [groups, setGroups] = useState<Group[]>(hasSavedData ? initialData!.groups ?? [] : seeds.seedGroups);
-  const [constraints, setConstraints] = useState<Constraint[]>(
-    hasSavedData ? initialData!.constraints ?? [] : seeds.seedConstraints
-  );
-  const [seatAssignment, setSeatAssignment] = useState<SeatAssignment>(
-    hasSavedData ? initialData!.seatAssignment ?? {} : {}
-  );
+  const [tableGroups, setTableGroups] = useState<TableGroup[]>(initialData?.tableGroups ?? []);
+  const [guests, setGuests] = useState<Guest[]>(initialData?.guests ?? []);
+  const [groups, setGroups] = useState<Group[]>(initialData?.groups ?? []);
+  const [constraints, setConstraints] = useState<Constraint[]>(initialData?.constraints ?? []);
+  const [seatAssignment, setSeatAssignment] = useState<SeatAssignment>(initialData?.seatAssignment ?? {});
   const [solving, setSolving] = useState(false);
   const [justGenerated, setJustGenerated] = useState(false);
   const [seatingView, setSeatingView] = useState("map");
@@ -655,23 +629,23 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const [picked, setPicked] = useState<string | null>(null);
   const [hoveredGuest, setHoveredGuest] = useState<string | null>(null);
   const [newGuestName, setNewGuestName] = useState("");
-  const [fillMode, setFillMode] = useState<FillMode>(
-    hasSavedData ? initialData!.fillMode ?? "spread" : "spread"
-  );
+  const [fillMode, setFillMode] = useState<FillMode>(initialData?.fillMode ?? "spread");
   const [minimizeChanges, setMinimizeChanges] = useState(true);
   const [activeTableIds, setActiveTableIds] = useState<Set<string> | null>(null);
   const [showAllTables, setShowAllTables] = useState(false);
   const [tableNameOverrides, setTableNameOverrides] = useState<Record<string, string>>(
-    hasSavedData ? initialData!.tableNameOverrides ?? {} : {}
+    initialData?.tableNameOverrides ?? {}
   );
   const [tablePositions, setTablePositions] = useState<Record<string, { x: number; y: number }>>(
-    hasSavedData ? initialData!.tablePositions ?? {} : {}
+    initialData?.tablePositions ?? {}
   );
   const [dragTable, setDragTable] = useState<{ id: string; x: number; y: number } | null>(null);
   const [pendingImport, setPendingImport] = useState<{
-    guests: { name: string; groupNames: string[] }[];
+    guests: { name: string; groupNames: string[]; email?: string; rsvpStatus?: RsvpStatus; mealChoice?: string }[];
     groupNames: string[];
-    skippedNotAttending: number;
+    declinedCount: number;
+    withRsvpData: number;
+    withMealData: number;
   } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
@@ -803,24 +777,36 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     });
     return m;
   }, [seatAssignment]);
-  const unseatedGuests = useMemo(() => guests.filter((g) => !seatOfGuest[g.id]), [guests, seatOfGuest]);
-  const seatedCount = guests.length - unseatedGuests.length;
+  const activeGuests = useMemo(() => guests.filter((g) => g.rsvpStatus !== "declined"), [guests]);
+  const unseatedGuests = useMemo(() => activeGuests.filter((g) => !seatOfGuest[g.id]), [activeGuests, seatOfGuest]);
+  const seatedCount = activeGuests.length - unseatedGuests.length;
   const notedGuests = useMemo(() => guests.filter((g) => g.note && g.note.trim().length > 0), [guests]);
   const notedGuestCount = notedGuests.length;
 
+  const mealStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    activeGuests.forEach((g) => {
+      const choice = g.mealChoice?.trim();
+      if (choice) counts[choice] = (counts[choice] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([choice, count]) => ({ choice, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [activeGuests]);
+
   const groupStats = useMemo(() => {
     const stats = groups.map((gr) => {
-      const members = guests.filter((g) => g.groupIds?.includes(gr.id));
+      const members = activeGuests.filter((g) => g.groupIds?.includes(gr.id));
       const seated = members.filter((g) => seatOfGuest[g.id]).length;
       return { group: gr, total: members.length, seated };
     });
-    const ungroupedMembers = guests.filter((g) => !g.groupIds || g.groupIds.length === 0);
+    const ungroupedMembers = activeGuests.filter((g) => !g.groupIds || g.groupIds.length === 0);
     const ungrouped = {
       total: ungroupedMembers.length,
       seated: ungroupedMembers.filter((g) => seatOfGuest[g.id]).length,
     };
     return { byGroup: stats, ungrouped };
-  }, [groups, guests, seatOfGuest]);
+  }, [groups, activeGuests, seatOfGuest]);
 
   const occupiedCountByTable = useMemo(() => {
     const m: Record<string, number> = {};
@@ -939,6 +925,33 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     if (readOnly) return;
     setGuests((g) => g.map((x) => (x.id === id ? { ...x, note } : x)));
   };
+  const updateGuestMealChoice = (id: string, mealChoice: string) => {
+    if (readOnly) return;
+    setGuests((g) => g.map((x) => (x.id === id ? { ...x, mealChoice } : x)));
+  };
+  const cycleRsvpStatus = (id: string) => {
+    if (readOnly) return;
+    const order: RsvpStatus[] = ["pending", "attending", "declined"];
+    let becameDeclined = false;
+    setGuests((g) =>
+      g.map((x) => {
+        if (x.id !== id) return x;
+        const current = x.rsvpStatus ?? "pending";
+        const next = order[(order.indexOf(current) + 1) % order.length];
+        if (next === "declined") becameDeclined = true;
+        return { ...x, rsvpStatus: next };
+      })
+    );
+    if (becameDeclined) {
+      setSeatAssignment((prev) => {
+        const seatId = Object.entries(prev).find(([, guestId]) => guestId === id)?.[0];
+        if (!seatId) return prev;
+        const next = { ...prev };
+        delete next[seatId];
+        return next;
+      });
+    }
+  };
   const removeGuest = (id: string) => {
     if (readOnly) return;
     setGuests((g) => g.filter((x) => x.id !== id));
@@ -960,14 +973,40 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   };
 
   // ---- spreadsheet import ----
+  async function logImport(guestCount: number, mode: string, hadRsvpData: boolean, hadMealData: boolean) {
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      await supabase.from("import_log").insert({
+        event_id: eventId,
+        user_id: user.id,
+        guest_count: guestCount,
+        mode,
+        had_rsvp_data: hadRsvpData,
+        had_meal_data: hadMealData,
+      });
+    } catch {
+      // best-effort only — never let logging affect the import itself
+    }
+  }
+
   function finishParse(raw: unknown[][]) {
-    const { guests: parsedGuests, groupNamesFound, skippedNotAttending } = parseGuestRows(raw);
+    const { guests: parsedGuests, groupNamesFound, declinedCount, withRsvpData, withMealData } = parseGuestRows(raw);
     if (parsedGuests.length === 0) {
       setImportError("Couldn't find any names in that file — make sure there's a column of guest names.");
       return;
     }
     setImportError(null);
-    setPendingImport({ guests: parsedGuests, groupNames: [...groupNamesFound], skippedNotAttending });
+    setPendingImport({
+      guests: parsedGuests,
+      groupNames: [...groupNamesFound],
+      declinedCount,
+      withRsvpData,
+      withMealData,
+    });
   }
 
   function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -998,7 +1037,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     e.target.value = "";
   }
 
-  function confirmImport(mode: "add" | "replace") {
+  function confirmImport(mode: "add" | "replace" | "sync") {
     if (readOnly || !pendingImport) return;
     const existingByName: Record<string, string> = {};
     groups.forEach((g) => (existingByName[g.name.trim().toLowerCase()] = g.id));
@@ -1011,20 +1050,91 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
         existingByName[key] = ng.id;
       }
     });
+    const resolveGroupIds = (groupNames: string[]) =>
+      groupNames.map((gn) => existingByName[gn.trim().toLowerCase()]).filter(Boolean);
+
+    setGroups((gs) => [...gs, ...newGroups]);
+
+    if (mode === "sync") {
+      const byEmail: Record<string, Guest> = {};
+      const byName: Record<string, Guest> = {};
+      guests.forEach((g) => {
+        if (g.email) byEmail[g.email.trim().toLowerCase()] = g;
+        byName[g.name.trim().toLowerCase()] = g;
+      });
+
+      const newlyDeclinedIds = new Set<string>();
+      const newGuests: Guest[] = [];
+      const updatesById: Record<string, Partial<Guest>> = {};
+
+      pendingImport.guests.forEach((row) => {
+        const matched = (row.email && byEmail[row.email]) || byName[row.name.trim().toLowerCase()];
+        const rowGroupIds = resolveGroupIds(row.groupNames);
+        if (matched) {
+          const patch: Partial<Guest> = { ...(updatesById[matched.id] || {}) };
+          if (row.email) patch.email = row.email;
+          if (row.rsvpStatus) patch.rsvpStatus = row.rsvpStatus;
+          if (row.mealChoice) patch.mealChoice = row.mealChoice;
+          if (rowGroupIds.length) {
+            patch.groupIds = [...new Set([...(matched.groupIds || []), ...rowGroupIds])];
+          }
+          updatesById[matched.id] = patch;
+          if (row.rsvpStatus === "declined") newlyDeclinedIds.add(matched.id);
+        } else {
+          newGuests.push({
+            id: genId(),
+            name: row.name,
+            groupIds: rowGroupIds,
+            email: row.email,
+            rsvpStatus: row.rsvpStatus,
+            mealChoice: row.mealChoice,
+          });
+        }
+      });
+
+      setGuests((gs) => [...gs.map((g) => (updatesById[g.id] ? { ...g, ...updatesById[g.id] } : g)), ...newGuests]);
+
+      if (newlyDeclinedIds.size > 0) {
+        setSeatAssignment((prev) => {
+          const next: SeatAssignment = {};
+          for (const [seatId, guestId] of Object.entries(prev)) {
+            if (!newlyDeclinedIds.has(guestId)) next[seatId] = guestId;
+          }
+          return next;
+        });
+      }
+
+      const updatedCount = Object.keys(updatesById).length;
+      setImportSuccess(
+        `Synced ${pendingImport.guests.length} guest${pendingImport.guests.length === 1 ? "" : "s"}: ` +
+          `${updatedCount} updated, ${newGuests.length} new` +
+          (newGroups.length ? `, ${newGroups.length} group${newGroups.length === 1 ? "" : "s"} created` : "") +
+          (newlyDeclinedIds.size > 0
+            ? `. Freed the seat${newlyDeclinedIds.size === 1 ? "" : "s"} for ${newlyDeclinedIds.size} guest${newlyDeclinedIds.size === 1 ? "" : "s"} who declined.`
+            : ".")
+      );
+      setPendingImport(null);
+      logImport(pendingImport.guests.length, "sync", pendingImport.withRsvpData > 0, pendingImport.withMealData > 0);
+      return;
+    }
+
     const importedGuests: Guest[] = pendingImport.guests.map((g) => ({
       id: genId(),
       name: g.name,
-      groupIds: g.groupNames.map((gn) => existingByName[gn.trim().toLowerCase()]).filter(Boolean),
+      groupIds: resolveGroupIds(g.groupNames),
+      email: g.email,
+      rsvpStatus: g.rsvpStatus,
+      mealChoice: g.mealChoice,
     }));
-    setGroups((gs) => [...gs, ...newGroups]);
     setGuests((gs) => (mode === "replace" ? importedGuests : [...gs, ...importedGuests]));
-    const skipped = pendingImport.skippedNotAttending;
+    const declined = pendingImport.declinedCount;
     setImportSuccess(
       `Imported ${importedGuests.length} guest${importedGuests.length === 1 ? "" : "s"}` +
         (newGroups.length ? ` and created ${newGroups.length} group${newGroups.length === 1 ? "" : "s"}.` : ".") +
-        (skipped > 0 ? ` Skipped ${skipped} marked as not attending.` : "")
+        (declined > 0 ? ` ${declined} marked as declined.` : "")
     );
     setPendingImport(null);
+    logImport(pendingImport.guests.length, mode, pendingImport.withRsvpData > 0, pendingImport.withMealData > 0);
   }
 
   // ---- group handlers ----
@@ -1659,7 +1769,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                     <strong>Bliss &amp; Bone:</strong> from your dashboard, open your guest list / RSVP tracker and use the export option to download your RSVP data.
                   </div>
                   <div style={{ color: C.muted }}>
-                    Any of these CSVs will import cleanly — SeatMe automatically skips guests marked as declined or not attending.
+                    Any of these CSVs will import cleanly. If the file has an RSVP status column, SeatMe reads it — declined guests won't count toward your seating totals. If it has an email or meal/entree column, SeatMe picks that up too — use "Sync RSVPs" to update your existing guest list from a new export instead of starting over.
                   </div>
                 </div>
               )}
@@ -1684,10 +1794,21 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                     </>
                   )}
                   .
-                  {pendingImport.skippedNotAttending > 0 && (
-                    <> Skipped {pendingImport.skippedNotAttending} marked as not attending.</>
+                  {pendingImport.declinedCount > 0 && (
+                    <> {pendingImport.declinedCount} marked as declined.</>
+                  )}
+                  {pendingImport.withRsvpData > 0 && (
+                    <> {pendingImport.withRsvpData} row{pendingImport.withRsvpData === 1 ? "" : "s"} with an RSVP status.</>
+                  )}
+                  {pendingImport.withMealData > 0 && (
+                    <> {pendingImport.withMealData} row{pendingImport.withMealData === 1 ? "" : "s"} with a meal choice.</>
                   )}
                   <div className="flex flex-wrap gap-2 mt-2">
+                    {guests.length > 0 && (
+                      <button onClick={() => confirmImport("sync")} className="px-2.5 py-1 rounded-md font-semibold" style={{ backgroundColor: C.sage, color: "#fff" }}>
+                        Sync RSVPs
+                      </button>
+                    )}
                     <button onClick={() => confirmImport("add")} className="px-2.5 py-1 rounded-md font-semibold" style={{ backgroundColor: C.gold, color: "#fff" }}>
                       Add to list
                     </button>
@@ -1698,6 +1819,11 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       Cancel
                     </button>
                   </div>
+                  {guests.length > 0 && (
+                    <div className="mt-1.5" style={{ color: C.muted }}>
+                      "Sync RSVPs" matches by email (or name) and updates existing guests without touching your seating — best for re-importing after an RSVP deadline.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1772,6 +1898,30 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                         onChange={(e) => updateGuestNote(g.id, e.target.value)}
                         disabled={readOnly}
                         placeholder="Dietary need, high chair, wheelchair access…"
+                        className="flex-1 bg-transparent outline-none text-[11px]"
+                        style={{ color: C.muted }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <button
+                        onClick={() => cycleRsvpStatus(g.id)}
+                        disabled={readOnly}
+                        title="Click to change RSVP status"
+                        className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium shrink-0 disabled:opacity-60"
+                        style={{
+                          borderColor:
+                            g.rsvpStatus === "declined" ? C.wine : g.rsvpStatus === "attending" ? C.sage : C.line,
+                          color:
+                            g.rsvpStatus === "declined" ? C.wine : g.rsvpStatus === "attending" ? C.sage : C.muted,
+                        }}
+                      >
+                        {g.rsvpStatus === "declined" ? "Declined" : g.rsvpStatus === "attending" ? "Attending" : "Pending"}
+                      </button>
+                      <input
+                        value={g.mealChoice ?? ""}
+                        onChange={(e) => updateGuestMealChoice(g.id, e.target.value)}
+                        disabled={readOnly}
+                        placeholder="Meal choice…"
                         className="flex-1 bg-transparent outline-none text-[11px]"
                         style={{ color: C.muted }}
                       />
@@ -2021,7 +2171,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
             <div className="mb-2 flex items-center gap-2 text-sm" style={{ color: C.ink }}>
               <Users size={15} style={{ color: C.gold }} />
               <span>
-                <strong>{seatedCount}</strong> of {guests.length} guest{guests.length === 1 ? "" : "s"} seated
+                <strong>{seatedCount}</strong> of {activeGuests.length} guest{activeGuests.length === 1 ? "" : "s"} seated
                 {unseatedGuests.length > 0 && <span style={{ color: C.muted }}> · {unseatedGuests.length} unseated</span>}
                 {notedGuestCount > 0 && (
                   <span style={{ color: C.muted }}>
@@ -2029,11 +2179,17 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                     · {notedGuestCount} with note{notedGuestCount === 1 ? "" : "s"}
                   </span>
                 )}
+                {guests.length > activeGuests.length && (
+                  <span style={{ color: C.muted }}>
+                    {" "}
+                    · {guests.length - activeGuests.length} declined
+                  </span>
+                )}
               </span>
             </div>
 
             {(groupStats.byGroup.length > 0 || groupStats.ungrouped.total > 0) && (
-              <div className="mb-5 flex flex-wrap gap-1.5">
+              <div className="mb-2 flex flex-wrap gap-1.5">
                 {groupStats.byGroup.map(({ group, total, seated }) => (
                   <div
                     key={group.id}
@@ -2048,6 +2204,20 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                     No group: {groupStats.ungrouped.seated}/{groupStats.ungrouped.total} seated
                   </div>
                 )}
+              </div>
+            )}
+
+            {mealStats.length > 0 && (
+              <div className="mb-5 flex flex-wrap gap-1.5">
+                {mealStats.map(({ choice, count }) => (
+                  <div
+                    key={choice}
+                    className="text-[11px] px-2 py-0.5 rounded-full border font-medium"
+                    style={{ borderColor: C.line, color: C.ink }}
+                  >
+                    {choice}: {count}
+                  </div>
+                ))}
               </div>
             )}
 

@@ -103,23 +103,26 @@ function esc(str) {
 async function main() {
   console.log("Pulling data from Supabase…");
 
-  const [users, profilesRes, eventsRes, membersRes, accessRes] = await Promise.all([
+  const [users, profilesRes, eventsRes, membersRes, accessRes, importRes] = await Promise.all([
     fetchAllUsers(),
     supabase.from("profiles").select("id, first_name, last_name"),
     supabase.from("events").select("id, owner_id, name, created_at, updated_at"),
     supabase.from("event_members").select("event_id, email, role"),
     supabase.from("access_log").select("user_id, access_day"),
+    supabase.from("import_log").select("user_id, guest_count, mode, had_rsvp_data, had_meal_data, created_at"),
   ]);
 
   if (profilesRes.error) throw profilesRes.error;
   if (eventsRes.error) throw eventsRes.error;
   if (membersRes.error) throw membersRes.error;
   if (accessRes.error) throw accessRes.error;
+  if (importRes.error) throw importRes.error;
 
   const profiles = profilesRes.data ?? [];
   const events = eventsRes.data ?? [];
   const members = membersRes.data ?? [];
   const accessRows = accessRes.data ?? [];
+  const importRows = importRes.data ?? [];
 
   const profileById = Object.fromEntries(profiles.map((p) => [p.id, p]));
   const emailToUserId = Object.fromEntries(
@@ -145,6 +148,12 @@ async function main() {
     (accessDaysByUser[row.user_id] ??= []).push(row.access_day);
   }
 
+  const importsByUser = {};
+  for (const row of importRows) {
+    if (!row.user_id) continue;
+    (importsByUser[row.user_id] ??= []).push(row);
+  }
+
   const cutoff7 = daysAgo(7);
   const cutoff30 = daysAgo(30);
 
@@ -163,6 +172,9 @@ async function main() {
     const createdTs = u.created_at ? new Date(u.created_at).getTime() : 0;
     const sortKey = Math.max(lastActiveTs, lastSignInTs, createdTs);
 
+    const imports = (importsByUser[u.id] ?? []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const lastImport = imports.length ? imports[imports.length - 1] : null;
+
     return {
       id: u.id,
       email: u.email ?? "(no email)",
@@ -175,6 +187,8 @@ async function main() {
       activeDaysLast30,
       eventsOwned: ownedEvents.length,
       eventsShared: sharedCountByUser[u.id] ?? 0,
+      importsCount: imports.length,
+      lastImportDate: fmtDate(lastImport?.created_at),
       sortKey,
     };
   });
@@ -194,6 +208,12 @@ async function main() {
     accessRows.filter((r) => new Date(r.access_day) >= cutoff30).map((r) => r.user_id)
   ).size;
   const hasAnyAccessData = accessRows.length > 0;
+
+  const totalImports = importRows.length;
+  const usersWithImports = new Set(importRows.map((r) => r.user_id)).size;
+  const importsWithRsvp = importRows.filter((r) => r.had_rsvp_data).length;
+  const importsWithMeal = importRows.filter((r) => r.had_meal_data).length;
+  const totalGuestsImported = importRows.reduce((sum, r) => sum + (r.guest_count || 0), 0);
 
   const generatedAt = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
 
@@ -216,6 +236,8 @@ async function main() {
         <td>${r.activeDaysLast30}</td>
         <td class="${r.eventsOwned === 0 ? "wine" : ""}">${r.eventsOwned}</td>
         <td>${r.eventsShared}</td>
+        <td>${r.importsCount}</td>
+        <td>${esc(r.lastImportDate ?? "—")}</td>
       </tr>`;
     })
     .join("");
@@ -337,6 +359,11 @@ async function main() {
       ${statCard("Users with 0 events", zeroEventUsers)}
       ${statCard("Active in app (7d)", activeInApp7)}
       ${statCard("Active in app (30d)", activeInApp30)}
+      ${statCard("Files imported", totalImports)}
+      ${statCard("Users who've imported", usersWithImports)}
+      ${statCard("Guests imported (total)", totalGuestsImported)}
+      ${statCard("Imports with RSVP data", importsWithRsvp)}
+      ${statCard("Imports with meal data", importsWithMeal)}
     </div>
 
     ${
@@ -358,6 +385,8 @@ async function main() {
             <th>Active days (30d)</th>
             <th>Events owned</th>
             <th>Events shared with</th>
+            <th>Files imported</th>
+            <th>Last import</th>
           </tr>
         </thead>
         <tbody>
