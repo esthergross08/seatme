@@ -33,7 +33,7 @@ export default function PrivacyPolicyPage() {
         Privacy Policy
       </h1>
       <p className="text-xs mb-10" style={{ color: C.muted }}>
-        Last updated August 17, 2026
+        Last updated August 19, 2026
       </p>
 
       <Section title="Overview">
@@ -72,6 +72,15 @@ export default function PrivacyPolicyPage() {
           <strong>Cookies.</strong> SeatMe uses cookies to keep you signed in (via Supabase) and a short-lived cookie
           during the Pinterest connection process to prevent cross-site request forgery. SeatMe does not use
           advertising or analytics cookies.
+        </p>
+        <p>
+          <strong>Site visit data.</strong> When you load one of SeatMe&apos;s public pages (the homepage, About,
+          Contact, Terms, Privacy, or the sign-in page), we log the page path, the referring site, and — if present
+          — any UTM campaign parameters in the URL, so we can see basic traffic patterns like which pages get
+          visited and where visitors are coming from. This applies whether or not you&apos;re signed in. To estimate
+          how many distinct visitors we get without identifying anyone, we generate a one-way, non-reversible hash
+          of your IP address, browser type, and the current date; we never store your raw IP address, and the hash
+          changes every day, so it can&apos;t be used to track anyone across visits or sessions.
         </p>
       </Section>
 

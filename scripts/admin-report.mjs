@@ -13,6 +13,12 @@
 //        SUPABASE_SERVICE_ROLE_KEY=<paste it here>
 //   4. Never commit that key or share it — it has full read/write access to
 //      the whole database. reports/ is already gitignored.
+//   5. (Optional but recommended) For "unique visitors" on site traffic to
+//      work, generate a random salt yourself — e.g. run this once in a
+//      terminal: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+//      — and add it to BOTH .env.local and your Vercel project's environment
+//      variables as VISIT_HASH_SALT. Page views still get logged without it;
+//      only the unique-visitor estimate depends on it.
 //
 // Usage:
 //   npm run admin:report
@@ -107,7 +113,10 @@ function saveHistory(historyPath, history) {
 
 // Hand-rolled SVG line chart — no external chart library, so this still
 // renders correctly when the report is opened offline via a file:// URL.
-function buildTrendChart(history) {
+// `series` is a list of { key, label, color } describing which fields of each
+// history entry to plot, so this one function drives every trend chart in the
+// report rather than hardcoding a single fixed set of lines.
+function buildTrendChart(history, series) {
   const W = 1020;
   const H = 260;
   const padL = 40;
@@ -116,12 +125,6 @@ function buildTrendChart(history) {
   const padB = 28;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
-
-  const series = [
-    { key: "totalUsers", label: "Total users", color: "var(--gold)" },
-    { key: "activeUsers", label: "Active users (7d)", color: "var(--sage)" },
-    { key: "totalEvents", label: "Total events", color: "var(--wine)" },
-  ];
 
   const maxVal = Math.max(4, ...history.flatMap((h) => series.map((s) => h[s.key] ?? 0))) * 1.15;
 
@@ -168,6 +171,18 @@ function buildTrendChart(history) {
     </svg>`;
 }
 
+const ACCOUNT_TREND_SERIES = [
+  { key: "totalUsers", label: "Total users", color: "var(--gold)" },
+  { key: "activeUsers", label: "Active users (7d)", color: "var(--sage)" },
+  { key: "totalEvents", label: "Total events", color: "var(--wine)" },
+];
+
+const TRAFFIC_TREND_SERIES = [
+  { key: "pageViews", label: "Page views", color: "var(--gold)" },
+  { key: "uniqueVisitors", label: "Unique visitors", color: "#4A6FA5" },
+  { key: "anonymousVisitors", label: "Anonymous (not signed in)", color: "var(--muted)" },
+];
+
 function esc(str) {
   return String(str ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;",
@@ -181,13 +196,16 @@ function esc(str) {
 async function main() {
   console.log("Pulling data from Supabase…");
 
-  const [users, profilesRes, eventsRes, membersRes, accessRes, importRes] = await Promise.all([
+  const [users, profilesRes, eventsRes, membersRes, accessRes, importRes, visitsRes] = await Promise.all([
     fetchAllUsers(),
     supabase.from("profiles").select("id, first_name, last_name"),
     supabase.from("events").select("id, owner_id, name, created_at, updated_at"),
     supabase.from("event_members").select("event_id, email, role"),
     supabase.from("access_log").select("user_id, access_day"),
     supabase.from("import_log").select("user_id, guest_count, mode, had_rsvp_data, had_meal_data, created_at"),
+    supabase
+      .from("site_visits")
+      .select("user_id, path, referrer, utm_source, utm_medium, utm_campaign, visitor_hash, visited_at"),
   ]);
 
   if (profilesRes.error) throw profilesRes.error;
@@ -195,12 +213,14 @@ async function main() {
   if (membersRes.error) throw membersRes.error;
   if (accessRes.error) throw accessRes.error;
   if (importRes.error) throw importRes.error;
+  if (visitsRes.error) throw visitsRes.error;
 
   const profiles = profilesRes.data ?? [];
   const events = eventsRes.data ?? [];
   const members = membersRes.data ?? [];
   const accessRows = accessRes.data ?? [];
   const importRows = importRes.data ?? [];
+  const visitRows = visitsRes.data ?? [];
 
   const profileById = Object.fromEntries(profiles.map((p) => [p.id, p]));
   const emailToUserId = Object.fromEntries(
@@ -293,6 +313,50 @@ async function main() {
   const importsWithMeal = importRows.filter((r) => r.had_meal_data).length;
   const totalGuestsImported = importRows.reduce((sum, r) => sum + (r.guest_count || 0), 0);
 
+  // Site visits: covers the public marketing pages, including visitors who
+  // never sign up — access_log above only ever sees people who already have
+  // an account. "Unique visitors" is estimated from a same-day, salted hash
+  // of IP+user-agent (set by the middleware) rather than a real identity, so
+  // it's a rough count, not exact — rows logged before VISIT_HASH_SALT was
+  // set (or if it's still unset) have no hash and are excluded from that
+  // count specifically, though they still count as page views.
+  const pageViews7 = visitRows.filter((r) => new Date(r.visited_at) >= cutoff7).length;
+  const pageViews30 = visitRows.filter((r) => new Date(r.visited_at) >= cutoff30).length;
+  const uniqueVisitors7 = new Set(
+    visitRows.filter((r) => r.visitor_hash && new Date(r.visited_at) >= cutoff7).map((r) => r.visitor_hash)
+  ).size;
+  const uniqueVisitors30 = new Set(
+    visitRows.filter((r) => r.visitor_hash && new Date(r.visited_at) >= cutoff30).map((r) => r.visitor_hash)
+  ).size;
+  const anonymousVisits30 = visitRows.filter((r) => !r.user_id && new Date(r.visited_at) >= cutoff30).length;
+  const hasAnyVisitData = visitRows.length > 0;
+  const hasVisitorHashes = visitRows.some((r) => r.visitor_hash);
+
+  function sourceOf(row) {
+    if (row.utm_source) return row.utm_source;
+    if (!row.referrer) return "(direct)";
+    try {
+      return new URL(row.referrer).hostname || row.referrer;
+    } catch {
+      return row.referrer;
+    }
+  }
+
+  const pageCounts30 = {};
+  const sourceCounts30 = {};
+  for (const r of visitRows) {
+    if (new Date(r.visited_at) < cutoff30) continue;
+    pageCounts30[r.path || "(unknown)"] = (pageCounts30[r.path || "(unknown)"] ?? 0) + 1;
+    const source = sourceOf(r);
+    sourceCounts30[source] = (sourceCounts30[source] ?? 0) + 1;
+  }
+  const topPages = Object.entries(pageCounts30)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+  const topSources = Object.entries(sourceCounts30)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+
   // Trend history: one data point per day, upserted so re-running the report
   // multiple times in a day just updates today's numbers instead of duplicating.
   const outDir = path.join(process.cwd(), "reports");
@@ -300,7 +364,16 @@ async function main() {
   const historyPath = path.join(outDir, "admin-history.json");
   const history = loadHistory(historyPath);
   const today = fmtDate(new Date());
-  const todayEntry = { date: today, totalUsers, activeUsers: activeInApp7, totalEvents };
+  const todayVisitRows = visitRows.filter((r) => fmtDate(r.visited_at) === today);
+  const todayEntry = {
+    date: today,
+    totalUsers,
+    activeUsers: activeInApp7,
+    totalEvents,
+    pageViews: todayVisitRows.length,
+    uniqueVisitors: new Set(todayVisitRows.filter((r) => r.visitor_hash).map((r) => r.visitor_hash)).size,
+    anonymousVisitors: todayVisitRows.filter((r) => !r.user_id).length,
+  };
   const existingIdx = history.findIndex((h) => h.date === today);
   if (existingIdx >= 0) history[existingIdx] = todayEntry;
   else history.push(todayEntry);
@@ -469,6 +542,11 @@ async function main() {
       ${statCard("Guests imported (total)", totalGuestsImported)}
       ${statCard("Imports with RSVP data", importsWithRsvp)}
       ${statCard("Imports with meal data", importsWithMeal)}
+      ${statCard("Page views (7d)", pageViews7)}
+      ${statCard("Page views (30d)", pageViews30)}
+      ${statCard("Unique visitors (7d)", uniqueVisitors7)}
+      ${statCard("Unique visitors (30d)", uniqueVisitors30)}
+      ${statCard("Anonymous visits (30d)", anonymousVisits30)}
     </div>
 
     <div class="chart-card">
@@ -476,9 +554,48 @@ async function main() {
       ${
         history.length < 2
           ? `<div class="note" style="margin-bottom:0;">Only ${history.length} day${history.length === 1 ? "" : "s"} of data so far — run this report again on a later day to start seeing a trend line. Each run records one data point for today (re-running the same day just updates it).</div>`
-          : buildTrendChart(history)
+          : buildTrendChart(history, ACCOUNT_TREND_SERIES)
       }
     </div>
+
+    <div class="chart-card">
+      <div class="chart-title">Trend — site traffic (page views, unique visitors, anonymous)</div>
+      ${
+        history.length < 2
+          ? `<div class="note" style="margin-bottom:0;">Only ${history.length} day${history.length === 1 ? "" : "s"} of data so far — run this report again on a later day to start seeing a trend line.</div>`
+          : buildTrendChart(history, TRAFFIC_TREND_SERIES)
+      }
+    </div>
+
+    ${
+      !hasAnyVisitData
+        ? `<div class="note">No site visits logged yet — this is a brand-new feature (2026-08-19). Once people (including anonymous visitors) load the homepage/about/contact/login pages, they'll start showing up here. If you haven't set <code>VISIT_HASH_SALT</code> in <code>.env.local</code> and Vercel yet, page views will still count but "unique visitors" will read 0 until it's set.</div>`
+        : !hasVisitorHashes
+        ? `<div class="note">Page views are being logged, but none have a visitor hash yet — set <code>VISIT_HASH_SALT</code> in <code>.env.local</code> and your Vercel project's environment variables to start estimating unique visitors (not required, but recommended).</div>`
+        : ""
+    }
+
+    ${
+      topPages.length > 0
+        ? `<div class="chart-card">
+            <div class="chart-title">Top pages (30d)</div>
+            <table><thead><tr><th>Path</th><th>Views</th></tr></thead><tbody>
+              ${topPages.map(([p, c]) => `<tr><td class="muted">${esc(p)}</td><td>${c}</td></tr>`).join("")}
+            </tbody></table>
+          </div>`
+        : ""
+    }
+
+    ${
+      topSources.length > 0
+        ? `<div class="chart-card">
+            <div class="chart-title">Top sources / referrers (30d)</div>
+            <table><thead><tr><th>Source</th><th>Visits</th></tr></thead><tbody>
+              ${topSources.map(([s, c]) => `<tr><td class="muted">${esc(s)}</td><td>${c}</td></tr>`).join("")}
+            </tbody></table>
+          </div>`
+        : ""
+    }
 
     ${
       !hasAnyAccessData
