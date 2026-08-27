@@ -1644,6 +1644,16 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
 
   const seatsShort = totalSeats < guests.length;
 
+  const PANE_ORDER = [
+    { id: "setup", label: "Tables" },
+    { id: "guests", label: "Guests & rules" },
+    { id: "seating", label: "Seating map" },
+    { id: "decor", label: "Decor ideas" },
+  ] as const;
+  const paneIndex = PANE_ORDER.findIndex((p) => p.id === tab);
+  const prevPane = paneIndex > 0 ? PANE_ORDER[paneIndex - 1] : null;
+  const nextPane = paneIndex >= 0 && paneIndex < PANE_ORDER.length - 1 ? PANE_ORDER[paneIndex + 1] : null;
+
   return (
     <div className="min-h-screen w-full flex" style={{ backgroundColor: C.paper, fontFamily: "Inter, sans-serif" }}>
       <style>{FONTS}</style>
@@ -1741,6 +1751,20 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
 
       {/* main */}
       <main className="flex-1 p-6 sm:p-10 pb-24 sm:pb-10 overflow-auto">
+        {/* mobile-only event name — the sidebar with the rename field is hidden below the sm breakpoint */}
+        <div className="sm:hidden mb-6">
+          <input
+            value={eventName}
+            onChange={(e) => setEventName(e.target.value)}
+            disabled={readOnly}
+            className="w-full bg-transparent outline-none text-xl leading-tight"
+            style={{ fontFamily: "Fraunces, serif", color: C.ink }}
+          />
+          <div className="mt-1 text-[10px]" style={{ color: C.muted }}>
+            {readOnly ? "View only" : saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Save failed" : saveStatus === "saved" ? "Saved" : ""}
+          </div>
+        </div>
+
         {tab === "setup" && (
           <div className="max-w-2xl">
             <SectionTitle eyebrow="Step one" title="Configure your tables" />
@@ -2510,8 +2534,17 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                           }}
                         >
                           <input
-                            value={t.label}
+                            value={tableNameOverrides[t.id] ?? t.label}
                             onChange={(e) => renameTable(t.id, e.target.value)}
+                            onBlur={(e) => {
+                              if (e.target.value.trim().length === 0) {
+                                setTableNameOverrides((m) => {
+                                  const next = { ...m };
+                                  delete next[t.id];
+                                  return next;
+                                });
+                              }
+                            }}
                             onMouseDown={(e) => e.stopPropagation()}
                             disabled={readOnly}
                             title="Click to rename this table"
@@ -2660,6 +2693,31 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
         )}
 
         {tab === "decor" && <DecorPanel eventId={eventId} readOnly={readOnly} />}
+
+        {(prevPane || nextPane) && (
+          <div className="flex items-center justify-between gap-3 mt-10 pt-6 border-t" style={{ borderColor: C.line }}>
+            {prevPane ? (
+              <button
+                onClick={() => setTab(prevPane.id)}
+                className="text-sm font-medium px-3 py-2 rounded-lg border"
+                style={{ borderColor: C.line, color: C.ink }}
+              >
+                ← {prevPane.label}
+              </button>
+            ) : (
+              <span />
+            )}
+            {nextPane && (
+              <button
+                onClick={() => setTab(nextPane.id)}
+                className="text-sm font-semibold px-4 py-2 rounded-lg"
+                style={{ backgroundColor: C.gold, color: "#fff" }}
+              >
+                Next: {nextPane.label} →
+              </button>
+            )}
+          </div>
+        )}
       </main>
 
       <AgentChat

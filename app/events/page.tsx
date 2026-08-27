@@ -6,7 +6,9 @@ import NewEventButton from "./NewEventButton";
 const C = {
   ink: "#221F2B",
   paper: "#F7F3EA",
+  card: "#FFFFFF",
   gold: "#A8823C",
+  goldSoft: "#E7D9B8",
   line: "#E4DCC9",
   muted: "#8A8272",
 };
@@ -26,85 +28,55 @@ export default async function EventsPage() {
 
   return (
     <div
-      style={{
-        minHeight: "100vh",
-        width: "100%",
-        backgroundColor: C.paper,
-        fontFamily: "Inter, sans-serif",
-        padding: "40px 24px",
-        boxSizing: "border-box",
-      }}
+      className="min-h-screen w-full px-6 py-10 sm:py-14"
+      style={{ backgroundColor: C.paper, fontFamily: "Inter, sans-serif" }}
     >
-      <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        <div style={{ marginBottom: 24 }}>
-          <div
-            style={{
-              fontSize: 11,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
-              fontWeight: 600,
-              color: C.gold,
-            }}
-          >
-            Seating Planner
+      <div className="max-w-2xl mx-auto">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
+          <div>
+            <div
+              className="text-[11px] tracking-[0.18em] uppercase font-semibold mb-1"
+              style={{ color: C.gold }}
+            >
+              Seating Planner
+            </div>
+            <h1 className="text-3xl" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+              My events
+            </h1>
+            <p className="text-xs mt-1" style={{ color: C.muted }}>
+              {user.email}
+            </p>
           </div>
-          <h1
-            style={{
-              fontFamily: "Georgia, serif",
-              fontSize: 28,
-              color: C.ink,
-              margin: "2px 0 0",
-            }}
-          >
-            My events
-          </h1>
-          <p style={{ fontSize: 13, color: C.muted, margin: "4px 0 0" }}>
-            {user.email}
-          </p>
+          <NewEventButton ownerId={user.id} />
         </div>
 
-        <NewEventButton ownerId={user.id} />
-
-        <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="flex flex-col gap-3">
           {(events ?? []).length === 0 && (
-            <p style={{ color: C.muted, fontSize: 14 }}>
-              No events yet — create your first one above.
-            </p>
+            <div className="p-6 rounded-xl border text-center" style={{ borderColor: C.line, backgroundColor: C.card }}>
+              <p className="text-sm" style={{ color: C.muted }}>
+                No events yet — create your first one above.
+              </p>
+            </div>
           )}
           {(events ?? []).map((ev) => (
             <Link
               key={ev.id}
               href={`/events/${ev.id}`}
-              style={{
-                display: "block",
-                padding: "14px 18px",
-                background: "#fff",
-                border: `1px solid ${C.line}`,
-                borderRadius: 12,
-                textDecoration: "none",
-                color: C.ink,
-              }}
+              className="block p-5 rounded-xl border transition-colors"
+              style={{ borderColor: C.line, backgroundColor: C.card, textDecoration: "none", color: C.ink }}
             >
-              <div style={{ fontFamily: "Georgia, serif", fontSize: 16 }}>
+              <div className="flex flex-wrap items-center gap-2 text-base font-medium" style={{ fontFamily: "Fraunces, serif" }}>
                 {ev.name || "Untitled event"}
                 {ev.owner_id !== user.id && (
                   <span
-                    style={{
-                      fontSize: 11,
-                      color: C.gold,
-                      border: `1px solid ${C.gold}`,
-                      borderRadius: 999,
-                      padding: "1px 8px",
-                      marginLeft: 8,
-                      fontFamily: "Inter, sans-serif",
-                      verticalAlign: "middle",
-                    }}
+                    className="text-[11px] font-medium rounded-full px-2 py-0.5"
+                    style={{ color: C.gold, border: `1px solid ${C.gold}`, fontFamily: "Inter, sans-serif" }}
                   >
                     shared with you
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+              <div className="text-xs mt-1" style={{ color: C.muted }}>
                 Updated {new Date(ev.updated_at).toLocaleDateString()}
               </div>
             </Link>

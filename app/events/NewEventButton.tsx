@@ -28,14 +28,11 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
     <button
       onClick={handleClick}
       disabled={loading}
+      className="text-sm font-semibold px-4 py-2.5 rounded-lg self-start sm:self-auto shrink-0"
       style={{
-        padding: "10px 16px",
-        borderRadius: 8,
         border: "none",
         backgroundColor: C.gold,
         color: "#fff",
-        fontWeight: 600,
-        fontSize: 14,
         cursor: loading ? "default" : "pointer",
         opacity: loading ? 0.7 : 1,
       }}
