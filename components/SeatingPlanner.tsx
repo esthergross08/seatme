@@ -215,6 +215,14 @@ function shapeRadius(shape: TableShape) {
 function computeLayout(tables: Table[], positionOverrides: Record<string, { x: number; y: number }> = {}) {
   const autoTables = tables.filter((t) => !positionOverrides[t.id]);
 
+  // Tables scale up when there are only a few of them, so a lone table (or a small
+  // handful) actually fills the canvas instead of sitting small in the corner —
+  // tapering back down to the normal baseline size by around 5-6 tables, where a
+  // bigger size would just mean more scrolling instead of a better view. Capped at
+  // 2.4x so a single table doesn't become absurd on its own.
+  const tableCount = tables.length || 1;
+  const scale = Math.max(1, Math.min(2.4, 2.4 / Math.sqrt(tableCount)));
+
   // Precompute each table's footprint first (shape + capacity + how wide its name
   // needs it to be) so the auto-placement grid can be spaced to fit the biggest
   // one, rather than assuming every table is the same small size. Without this, a
@@ -223,7 +231,7 @@ function computeLayout(tables: Table[], positionOverrides: Record<string, { x: n
   const dims: Record<string, { r: number; w: number; h: number; seatR: number }> = {};
   let maxSeatR = 0;
   tables.forEach((t) => {
-    const r = Math.min(58, 34 + t.capacity * 3.2);
+    const r = Math.min(58, 34 + t.capacity * 3.2) * scale;
     const { w, h } = shapeDims(t.shape, r, minTableTextWidth(t.label));
     const seatR = Math.max(w, h) / 2 + 34;
     dims[t.id] = { r, w, h, seatR };

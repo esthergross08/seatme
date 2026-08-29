@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -14,6 +14,22 @@ const C = {
   wine: "#8C3B3B",
 };
 
+interface PastEvent {
+  id: string;
+  name: string | null;
+  location: string | null;
+  event_date: string | null;
+  updated_at: string;
+  max_capacity: number | null;
+  data: { tableGroups?: unknown[]; tableNameOverrides?: Record<string, string>; tablePositions?: Record<string, { x: number; y: number }> } | null;
+}
+
+function formatEventDate(dateStr: string) {
+  // Parse as a plain calendar date (no timezone shift) — same approach as EventsList.tsx.
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
 export default function NewEventButton({ ownerId }: { ownerId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -24,6 +40,12 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
   const [location, setLocation] = useState("");
   const [maxCapacity, setMaxCapacity] = useState("");
 
+  // Past locations you've used, fetched fresh each time the modal opens — this is what
+  // powers both the location autocomplete and the "you've been here before, want to
+  // reuse the table setup?" offer below, without needing a separate saved-locations table.
+  const [pastEvents, setPastEvents] = useState<PastEvent[]>([]);
+  const [copySetup, setCopySetup] = useState(false);
+
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -33,13 +55,72 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("events")
+        .select("id, name, location, event_date, updated_at, max_capacity, data")
+        .eq("owner_id", ownerId)
+        .not("location", "is", null)
+        .order("updated_at", { ascending: false })
+        .limit(50);
+      if (!cancelled) setPastEvents((data as PastEvent[]) ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, ownerId]);
+
+  const knownLocations = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    pastEvents.forEach((ev) => {
+      const loc = ev.location?.trim();
+      if (loc && !seen.has(loc.toLowerCase())) {
+        seen.add(loc.toLowerCase());
+        list.push(loc);
+      }
+    });
+    return list;
+  }, [pastEvents]);
+
+  // Most recent past event at this exact location that actually has a table setup
+  // worth offering to copy (skip empty/never-built-out events).
+  const matchedEvent = useMemo(() => {
+    const trimmed = location.trim().toLowerCase();
+    if (!trimmed) return null;
+    return (
+      pastEvents.find(
+        (ev) => ev.location?.trim().toLowerCase() === trimmed && (ev.data?.tableGroups?.length ?? 0) > 0
+      ) ?? null
+    );
+  }, [location, pastEvents]);
+
+  useEffect(() => {
+    if (!matchedEvent) setCopySetup(false);
+  }, [matchedEvent]);
+
   function openModal() {
     setName("");
     setEventDate("");
     setLocation("");
     setMaxCapacity("");
+    setCopySetup(false);
     setError(null);
     setOpen(true);
+  }
+
+  function toggleCopySetup() {
+    setCopySetup((prev) => {
+      const next = !prev;
+      if (next && matchedEvent && maxCapacity === "" && matchedEvent.max_capacity != null) {
+        setMaxCapacity(String(matchedEvent.max_capacity));
+      }
+      return next;
+    });
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -47,6 +128,14 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
     setLoading(true);
     setError(null);
     const supabase = createClient();
+    const seedData =
+      copySetup && matchedEvent
+        ? {
+            tableGroups: matchedEvent.data?.tableGroups ?? [],
+            tableNameOverrides: matchedEvent.data?.tableNameOverrides ?? {},
+            tablePositions: matchedEvent.data?.tablePositions ?? {},
+          }
+        : {};
     const { data, error } = await supabase
       .from("events")
       .insert({
@@ -55,7 +144,7 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
         event_date: eventDate || null,
         location: location.trim() || null,
         max_capacity: maxCapacity === "" ? null : Number(maxCapacity),
-        data: {},
+        data: seedData,
       })
       .select()
       .single();
@@ -161,10 +250,43 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   placeholder="Venue, city, or address"
+                  list="new-event-known-locations"
                   className="px-3 py-2 rounded-lg border text-sm outline-none"
                   style={{ borderColor: C.line, color: C.ink }}
                 />
+                {knownLocations.length > 0 && (
+                  <datalist id="new-event-known-locations">
+                    {knownLocations.map((loc) => (
+                      <option key={loc} value={loc} />
+                    ))}
+                  </datalist>
+                )}
               </label>
+
+              {matchedEvent && (
+                <div
+                  className="flex items-start justify-between gap-3 p-3 rounded-lg text-xs"
+                  style={{ backgroundColor: "#FBF3E4", color: C.ink }}
+                >
+                  <span>
+                    You&apos;ve used this location before, for <strong>{matchedEvent.name || "an earlier event"}</strong>
+                    {matchedEvent.event_date ? ` (${formatEventDate(matchedEvent.event_date)})` : ""}.{" "}
+                    {copySetup ? "Its table setup and capacity will carry over." : "Reuse its table setup and capacity?"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleCopySetup}
+                    className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-lg"
+                    style={{
+                      backgroundColor: copySetup ? C.gold : "transparent",
+                      color: copySetup ? "#fff" : C.gold,
+                      border: `1px solid ${C.gold}`,
+                    }}
+                  >
+                    {copySetup ? "Will copy ✓" : "Copy setup"}
+                  </button>
+                </div>
+              )}
 
               {error && (
                 <p className="text-xs" style={{ color: C.wine }}>
