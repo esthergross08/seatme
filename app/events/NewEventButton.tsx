@@ -24,6 +24,13 @@ interface PastEvent {
   data: { tableGroups?: unknown[]; tableNameOverrides?: Record<string, string>; tablePositions?: Record<string, { x: number; y: number }> } | null;
 }
 
+interface SavedLocation {
+  id: string;
+  name: string;
+  capacity: number | null;
+  table_groups: unknown[];
+}
+
 function formatEventDate(dateStr: string) {
   // Parse as a plain calendar date (no timezone shift) — same approach as EventsList.tsx.
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -42,8 +49,11 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
 
   // Past locations you've used, fetched fresh each time the modal opens — this is what
   // powers both the location autocomplete and the "you've been here before, want to
-  // reuse the table setup?" offer below, without needing a separate saved-locations table.
+  // reuse the table setup?" offer below. Saved locations (from the My locations page)
+  // are a curated, intentional source and take priority; a past event at the same
+  // location is the fallback for venues you haven't saved a location profile for yet.
   const [pastEvents, setPastEvents] = useState<PastEvent[]>([]);
+  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([]);
   const [copySetup, setCopySetup] = useState(false);
 
   useEffect(() => {
@@ -60,14 +70,20 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
     let cancelled = false;
     (async () => {
       const supabase = createClient();
-      const { data } = await supabase
-        .from("events")
-        .select("id, name, location, event_date, updated_at, max_capacity, data")
-        .eq("owner_id", ownerId)
-        .not("location", "is", null)
-        .order("updated_at", { ascending: false })
-        .limit(50);
-      if (!cancelled) setPastEvents((data as PastEvent[]) ?? []);
+      const [{ data: eventsData }, { data: locationsData }] = await Promise.all([
+        supabase
+          .from("events")
+          .select("id, name, location, event_date, updated_at, max_capacity, data")
+          .eq("owner_id", ownerId)
+          .not("location", "is", null)
+          .order("updated_at", { ascending: false })
+          .limit(50),
+        supabase.from("locations").select("id, name, capacity, table_groups").eq("owner_id", ownerId),
+      ]);
+      if (!cancelled) {
+        setPastEvents((eventsData as PastEvent[]) ?? []);
+        setSavedLocations((locationsData as SavedLocation[]) ?? []);
+      }
     })();
     return () => {
       cancelled = true;
@@ -77,31 +93,39 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
   const knownLocations = useMemo(() => {
     const seen = new Set<string>();
     const list: string[] = [];
-    pastEvents.forEach((ev) => {
-      const loc = ev.location?.trim();
-      if (loc && !seen.has(loc.toLowerCase())) {
-        seen.add(loc.toLowerCase());
-        list.push(loc);
+    [...savedLocations.map((l) => l.name), ...pastEvents.map((ev) => ev.location || "")].forEach((loc) => {
+      const trimmed = loc.trim();
+      if (trimmed && !seen.has(trimmed.toLowerCase())) {
+        seen.add(trimmed.toLowerCase());
+        list.push(trimmed);
       }
     });
     return list;
-  }, [pastEvents]);
+  }, [savedLocations, pastEvents]);
 
-  // Most recent past event at this exact location that actually has a table setup
-  // worth offering to copy (skip empty/never-built-out events).
-  const matchedEvent = useMemo(() => {
+  // A saved location profile (from My locations) is the curated, intentional source and
+  // wins if one matches. Otherwise fall back to the most recent past event at this exact
+  // location that actually has a table setup worth offering (skip empty/never-built-out
+  // events).
+  const matchedLocation = useMemo(() => {
     const trimmed = location.trim().toLowerCase();
     if (!trimmed) return null;
+    return savedLocations.find((l) => l.name.trim().toLowerCase() === trimmed) ?? null;
+  }, [location, savedLocations]);
+
+  const matchedEvent = useMemo(() => {
+    const trimmed = location.trim().toLowerCase();
+    if (!trimmed || matchedLocation) return null;
     return (
       pastEvents.find(
         (ev) => ev.location?.trim().toLowerCase() === trimmed && (ev.data?.tableGroups?.length ?? 0) > 0
       ) ?? null
     );
-  }, [location, pastEvents]);
+  }, [location, pastEvents, matchedLocation]);
 
   useEffect(() => {
-    if (!matchedEvent) setCopySetup(false);
-  }, [matchedEvent]);
+    if (!matchedLocation && !matchedEvent) setCopySetup(false);
+  }, [matchedLocation, matchedEvent]);
 
   function openModal() {
     setName("");
@@ -116,8 +140,9 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
   function toggleCopySetup() {
     setCopySetup((prev) => {
       const next = !prev;
-      if (next && matchedEvent && maxCapacity === "" && matchedEvent.max_capacity != null) {
-        setMaxCapacity(String(matchedEvent.max_capacity));
+      const fallbackCapacity = matchedLocation ? matchedLocation.capacity : matchedEvent?.max_capacity ?? null;
+      if (next && maxCapacity === "" && fallbackCapacity != null) {
+        setMaxCapacity(String(fallbackCapacity));
       }
       return next;
     });
@@ -128,14 +153,17 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
     setLoading(true);
     setError(null);
     const supabase = createClient();
-    const seedData =
-      copySetup && matchedEvent
-        ? {
-            tableGroups: matchedEvent.data?.tableGroups ?? [],
-            tableNameOverrides: matchedEvent.data?.tableNameOverrides ?? {},
-            tablePositions: matchedEvent.data?.tablePositions ?? {},
-          }
-        : {};
+    const seedData = !copySetup
+      ? {}
+      : matchedLocation
+      ? { tableGroups: matchedLocation.table_groups ?? [] }
+      : matchedEvent
+      ? {
+          tableGroups: matchedEvent.data?.tableGroups ?? [],
+          tableNameOverrides: matchedEvent.data?.tableNameOverrides ?? {},
+          tablePositions: matchedEvent.data?.tablePositions ?? {},
+        }
+      : {};
     const { data, error } = await supabase
       .from("events")
       .insert({
@@ -263,14 +291,22 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
                 )}
               </label>
 
-              {matchedEvent && (
+              {(matchedLocation || matchedEvent) && (
                 <div
                   className="flex items-start justify-between gap-3 p-3 rounded-lg text-xs"
                   style={{ backgroundColor: "#FBF3E4", color: C.ink }}
                 >
                   <span>
-                    You&apos;ve used this location before, for <strong>{matchedEvent.name || "an earlier event"}</strong>
-                    {matchedEvent.event_date ? ` (${formatEventDate(matchedEvent.event_date)})` : ""}.{" "}
+                    {matchedLocation ? (
+                      <>
+                        You&apos;ve saved a location profile for <strong>{matchedLocation.name}</strong>.
+                      </>
+                    ) : (
+                      <>
+                        You&apos;ve used this location before, for <strong>{matchedEvent!.name || "an earlier event"}</strong>
+                        {matchedEvent!.event_date ? ` (${formatEventDate(matchedEvent!.event_date)})` : ""}.
+                      </>
+                    )}{" "}
                     {copySetup ? "Its table setup and capacity will carry over." : "Reuse its table setup and capacity?"}
                   </span>
                   <button

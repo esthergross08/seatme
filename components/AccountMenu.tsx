@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { User, LayoutGrid, LogOut, ChevronDown } from "lucide-react";
+import { User, LayoutGrid, MapPin, LogOut, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const C = {
@@ -102,6 +102,15 @@ export default function AccountMenu({
           >
             <LayoutGrid size={15} style={{ color: C.gold }} />
             My events
+          </Link>
+          <Link
+            href="/locations"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 text-sm"
+            style={{ padding: "10px 14px", color: C.ink, textDecoration: "none" }}
+          >
+            <MapPin size={15} style={{ color: C.gold }} />
+            My locations
           </Link>
           <div style={{ borderTop: `1px solid ${C.line}` }} />
           <button
