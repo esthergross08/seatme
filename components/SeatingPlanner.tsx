@@ -22,6 +22,7 @@ import {
   Shuffle,
   Undo2,
   Search,
+  Share2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -49,6 +50,21 @@ const FONTS = `
 `;
 
 const genId = () => Math.random().toString(36).slice(2, 9);
+
+// Compact 1-3 char badge for an event name — "Ellis & Rowan" -> "E&R", "Company Offsite" -> "CO".
+function eventInitials(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "?";
+  const ampMatch = trimmed.match(/^(.+?)\s*(?:&|\band\b)\s*(.+)$/i);
+  if (ampMatch) {
+    const a = ampMatch[1].trim()[0];
+    const b = ampMatch[2].trim()[0];
+    if (a && b) return `${a.toUpperCase()}&${b.toUpperCase()}`;
+  }
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return trimmed.slice(0, 2).toUpperCase();
+}
 
 const GROUP_COLORS = ["#A8823C", "#54704F", "#4A6FA5", "#8C3B3B", "#7A5C8E", "#B0562F"];
 
@@ -860,6 +876,7 @@ export default function SeatingPlanner({
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [showImportHelp, setShowImportHelp] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mapCaptureRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -2107,135 +2124,165 @@ export default function SeatingPlanner({
   const nextPane = paneIndex >= 0 && paneIndex < PANE_ORDER.length - 1 ? PANE_ORDER[paneIndex + 1] : null;
 
   return (
-    <div className="min-h-screen w-full flex" style={{ backgroundColor: C.paper, fontFamily: "Inter, sans-serif" }}>
+    <div className="min-h-screen w-full flex flex-col" style={{ backgroundColor: C.paper, fontFamily: "Inter, sans-serif" }}>
       <style>{FONTS}</style>
 
-      {/* sidebar */}
-      <aside className="w-56 shrink-0 hidden sm:flex flex-col gap-1 p-5 border-r" style={{ borderColor: C.line }}>
-        <div className="mb-4">
-          <a href="/events" className="text-[10px] tracking-[0.2em] uppercase font-semibold" style={{ color: C.gold, textDecoration: "none" }}>
+      {/* header — compact, all breakpoints: badge + name + date/venue/capacity, stats, save status, share */}
+      <header className="border-b" style={{ borderColor: C.line, backgroundColor: C.card }}>
+        <div className="px-4 sm:px-8 py-4 flex flex-wrap items-start gap-4">
+          <a
+            href="/events"
+            className="text-[10px] tracking-[0.2em] uppercase font-semibold shrink-0 mt-1.5"
+            style={{ color: C.gold, textDecoration: "none" }}
+          >
             ← My events
           </a>
-          <input
-            value={eventName}
-            onChange={(e) => setEventName(e.target.value)}
-            disabled={readOnly}
-            className="mt-1 w-full bg-transparent outline-none text-lg leading-tight"
-            style={{ fontFamily: "Fraunces, serif", color: C.ink }}
-          />
-          <div className="mt-1 text-[10px]" style={{ color: C.muted }}>
-            {readOnly ? "View only" : saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Save failed" : saveStatus === "saved" ? "Saved" : ""}
-          </div>
-        </div>
 
-        <div className="mb-4 flex flex-col gap-1.5 text-xs">
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[10px]" style={{ color: C.muted }}>
-              Date
-            </span>
-            <input
-              type="date"
-              value={eventDate}
-              onChange={(e) => setEventDate(e.target.value)}
-              disabled={readOnly}
-              className="px-1.5 py-1 rounded-md border text-xs bg-transparent outline-none"
-              style={{ borderColor: C.line, color: C.ink }}
-            />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[10px]" style={{ color: C.muted }}>
-              Location
-            </span>
-            <input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              disabled={readOnly}
-              placeholder="Venue, city…"
-              className="px-1.5 py-1 rounded-md border text-xs bg-transparent outline-none"
-              style={{ borderColor: C.line, color: C.ink }}
-            />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[10px]" style={{ color: C.muted }}>
-              Max capacity
-            </span>
-            <input
-              type="number"
-              min={0}
-              value={maxCapacity}
-              onChange={(e) => setMaxCapacity(e.target.value === "" ? "" : Number(e.target.value))}
-              disabled={readOnly}
-              placeholder="Optional"
-              className="px-1.5 py-1 rounded-md border text-xs bg-transparent outline-none"
-              style={{ borderColor: C.line, color: C.ink }}
-            />
-          </label>
-        </div>
-
-        {[
-          { id: "setup", label: "1. Tables", icon: Table2 },
-          { id: "guests", label: "2. Guests & rules", icon: Users },
-          { id: "seating", label: "3. Seating map", icon: LayoutGrid },
-          { id: "decor", label: "4. Decor ideas", icon: Palette },
-        ].map((t) => {
-          const Icon = t.icon;
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-left transition-colors"
-              style={{
-                backgroundColor: active ? C.ink : "transparent",
-                color: active ? C.paper : C.ink,
-              }}
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
+              style={{ backgroundColor: C.goldSoft, color: C.gold, fontFamily: "Fraunces, serif" }}
+              aria-hidden
             >
-              <Icon size={15} />
-              {t.label}
-              {t.id === "seating" && violatedCount > 0 && (
-                <span
-                  className="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-                  style={{ backgroundColor: active ? C.wine : "#F3E4E4", color: active ? "#fff" : C.wine }}
-                >
-                  {violatedCount}
+              {eventInitials(eventName)}
+            </div>
+            <div className="min-w-0">
+              <input
+                value={eventName}
+                onChange={(e) => setEventName(e.target.value)}
+                disabled={readOnly}
+                aria-label="Event name"
+                className="w-full bg-transparent outline-none text-lg leading-tight"
+                style={{ fontFamily: "Fraunces, serif", color: C.ink }}
+              />
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mt-0.5">
+                <input
+                  type="date"
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                  disabled={readOnly}
+                  aria-label="Event date"
+                  className="text-[11px] bg-transparent outline-none rounded"
+                  style={{ color: C.muted }}
+                />
+                <span className="text-[11px]" style={{ color: C.line }}>
+                  ·
+                </span>
+                <input
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  disabled={readOnly}
+                  placeholder="Venue, city…"
+                  aria-label="Location"
+                  className="text-[11px] bg-transparent outline-none rounded w-28"
+                  style={{ color: C.muted }}
+                />
+                <span className="text-[11px]" style={{ color: C.line }}>
+                  ·
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  value={maxCapacity}
+                  onChange={(e) => setMaxCapacity(e.target.value === "" ? "" : Number(e.target.value))}
+                  disabled={readOnly}
+                  placeholder="Max cap."
+                  aria-label="Max capacity"
+                  className="text-[11px] bg-transparent outline-none rounded w-16"
+                  style={{ color: C.muted }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+            <div className="flex items-center gap-3 text-[11px] px-3 py-1.5 rounded-full" style={{ backgroundColor: C.paper, color: C.muted }}>
+              <span>
+                Guests <b style={{ color: capacityExceeded ? C.wine : C.ink }}>{guests.length}</b>
+              </span>
+              <span>
+                Tables <b style={{ color: C.ink }}>{tables.length}</b>
+              </span>
+              <span>
+                Seats <b style={{ color: seatsShort ? C.wine : C.ink }}>{totalSeats}</b>
+              </span>
+              {maxCapacity !== "" && (
+                <span>
+                  Capacity{" "}
+                  <b style={{ color: capacityExceeded ? C.wine : C.ink }}>
+                    {activeGuests.length}/{maxCapacity}
+                  </b>
                 </span>
               )}
-            </button>
-          );
-        })}
-
-        <div className="mt-auto pt-6 text-xs leading-relaxed" style={{ color: C.muted }}>
-          <div className="flex justify-between py-0.5">
-            <span>Guests</span>
-            <span style={{ color: capacityExceeded ? C.wine : C.muted }}>{guests.length}</span>
-          </div>
-          <div className="flex justify-between py-0.5">
-            <span>Tables</span>
-            <span>{tables.length}</span>
-          </div>
-          <div className="flex justify-between py-0.5">
-            <span>Seats</span>
-            <span style={{ color: seatsShort ? C.wine : C.muted }}>{totalSeats}</span>
-          </div>
-          {maxCapacity !== "" && (
-            <div className="flex justify-between py-0.5">
-              <span>Capacity</span>
-              <span style={{ color: capacityExceeded ? C.wine : C.muted }}>
-                {activeGuests.length}/{maxCapacity}
-              </span>
             </div>
-          )}
+
+            {(readOnly || saveStatus !== "idle") && (
+              <span
+                className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full"
+                style={{
+                  backgroundColor: saveStatus === "error" ? "#F3E4E4" : "#EEF2EA",
+                  color: saveStatus === "error" ? C.wine : C.sage,
+                }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: saveStatus === "error" ? C.wine : C.sage }} />
+                {readOnly ? "View only" : saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Save failed" : "All changes saved"}
+              </span>
+            )}
+
+            {role === "owner" && (
+              <button
+                onClick={() => setShowShare((v) => !v)}
+                className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border"
+                style={{ borderColor: C.line, color: C.ink }}
+              >
+                <Share2 size={12} /> Share
+              </button>
+            )}
+          </div>
         </div>
 
-        {role === "owner" && (
-          <div className="pt-4 mt-4 border-t" style={{ borderColor: C.line }}>
-            <div className="text-[10px] tracking-[0.15em] uppercase font-semibold mb-2" style={{ color: C.gold }}>
-              Share
-            </div>
+        {showShare && role === "owner" && (
+          <div className="px-4 sm:px-8 pb-4">
             <InviteForm eventId={eventId} initialMembers={members} />
           </div>
         )}
-      </aside>
+
+        {/* tab nav — horizontal pills on larger screens; mobile keeps the fixed bottom icon bar */}
+        <div className="hidden sm:flex items-center gap-2 px-4 sm:px-8 pb-3 overflow-x-auto">
+          {[
+            { id: "setup", label: "Tables", icon: Table2 },
+            { id: "guests", label: "Guests & rules", icon: Users },
+            { id: "seating", label: "Seating map", icon: LayoutGrid },
+            { id: "decor", label: "Decor ideas", icon: Palette },
+          ].map((t) => {
+            const Icon = t.icon;
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium shrink-0 transition-colors"
+                style={{
+                  backgroundColor: active ? C.ink : "transparent",
+                  color: active ? C.paper : C.ink,
+                  border: active ? "none" : `1px solid ${C.line}`,
+                }}
+              >
+                <Icon size={14} />
+                {t.label}
+                {t.id === "seating" && violatedCount > 0 && (
+                  <span
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                    style={{ backgroundColor: active ? C.wine : "#F3E4E4", color: active ? "#fff" : C.wine }}
+                  >
+                    {violatedCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </header>
 
       {/* mobile tab bar */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 flex justify-around p-2 border-t z-20" style={{ backgroundColor: C.card, borderColor: C.line }}>
@@ -2263,51 +2310,6 @@ export default function SeatingPlanner({
 
       {/* main */}
       <main className="flex-1 p-6 sm:p-10 pb-36 sm:pb-10 overflow-auto">
-        {/* mobile-only event name — the sidebar with the rename field is hidden below the sm breakpoint */}
-        <div className="sm:hidden mb-6">
-          <input
-            value={eventName}
-            onChange={(e) => setEventName(e.target.value)}
-            disabled={readOnly}
-            className="w-full bg-transparent outline-none text-xl leading-tight"
-            style={{ fontFamily: "Fraunces, serif", color: C.ink }}
-          />
-          <div className="mt-1 text-[10px]" style={{ color: C.muted }}>
-            {readOnly ? "View only" : saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Save failed" : saveStatus === "saved" ? "Saved" : ""}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2 text-xs">
-            <input
-              type="date"
-              value={eventDate}
-              onChange={(e) => setEventDate(e.target.value)}
-              disabled={readOnly}
-              aria-label="Event date"
-              className="px-2 py-1.5 rounded-lg border bg-transparent outline-none"
-              style={{ borderColor: C.line, color: C.ink }}
-            />
-            <input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              disabled={readOnly}
-              placeholder="Location"
-              aria-label="Location"
-              className="flex-1 min-w-[120px] px-2 py-1.5 rounded-lg border bg-transparent outline-none"
-              style={{ borderColor: C.line, color: C.ink }}
-            />
-            <input
-              type="number"
-              min={0}
-              value={maxCapacity}
-              onChange={(e) => setMaxCapacity(e.target.value === "" ? "" : Number(e.target.value))}
-              disabled={readOnly}
-              placeholder="Max capacity"
-              aria-label="Max capacity"
-              className="w-28 px-2 py-1.5 rounded-lg border bg-transparent outline-none"
-              style={{ borderColor: C.line, color: C.ink }}
-            />
-          </div>
-        </div>
-
         {tab === "setup" && (
           <div className="max-w-2xl">
             <SectionTitle eyebrow="Step one" title="Configure your tables" />
