@@ -27,10 +27,10 @@ export default function ContactPage() {
         className="inline-flex items-center text-sm font-semibold px-5 py-3 rounded-lg"
         style={{ backgroundColor: C.gold, color: "#fff", textDecoration: "none" }}
       >
-        esther@gross.gg
+        Send email
       </a>
       <div className="mt-8 p-4 rounded-xl border text-xs leading-relaxed" style={{ borderColor: C.line, backgroundColor: C.card, color: C.muted }}>
-        For requests about your personal data (access or deletion), see the <a href="/privacy" style={{ color: C.gold }}>Privacy Policy</a> — the same email above works for those too.
+        For requests about your personal data (access or deletion), see the <a href="/privacy" style={{ color: C.gold }}>Privacy Policy</a> — the button above works for those too.
       </div>
     </div>
   );
