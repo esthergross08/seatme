@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-const C = { muted: "#6B6580" };
+const C = { muted: "#736D5F" };
 
 export default function SignOutButton() {
   const router = useRouter();

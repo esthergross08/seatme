@@ -5,14 +5,14 @@ import { MessageCircle, X, Send, Check, Loader2, AlertTriangle } from "lucide-re
 import { describeOperation, type AgentOperation, type AgentApplyResult } from "@/lib/agentOperations";
 
 const C = {
-  ink: "#2B2440",
-  paper: "#F5F2FB",
+  ink: "#221F2B",
+  paper: "#F7F3EA",
   card: "#FFFFFF",
-  gold: "#7454C9",
+  gold: "#A8823C",
   wine: "#8C3B3B",
   sage: "#54704F",
-  line: "#E3DEF2",
-  muted: "#6B6580",
+  line: "#E4DCC9",
+  muted: "#736D5F",
 };
 
 const genId = () => Math.random().toString(36).slice(2, 9);

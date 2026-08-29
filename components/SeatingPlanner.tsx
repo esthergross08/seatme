@@ -33,15 +33,15 @@ import type { AgentOperation, AgentApplyResult } from "@/lib/agentOperations";
 
 // ---------- palette / tokens ----------
 const C = {
-  ink: "#2B2440",
-  paper: "#F5F2FB",
+  ink: "#221F2B",
+  paper: "#F7F3EA",
   card: "#FFFFFF",
-  gold: "#7454C9",
-  goldSoft: "#E9E1FA",
+  gold: "#A8823C",
+  goldSoft: "#E7D9B8",
   wine: "#8C3B3B",
   sage: "#54704F",
-  line: "#E3DEF2",
-  muted: "#6B6580",
+  line: "#E4DCC9",
+  muted: "#736D5F",
 };
 
 const FONTS = `
@@ -1796,7 +1796,7 @@ export default function SeatingPlanner({
     setExportingPdf(true);
     try {
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas-pro"), import("jspdf")]);
-      const canvas = await html2canvas(mapCaptureRef.current, { backgroundColor: "#FAF8FE", scale: 2 });
+      const canvas = await html2canvas(mapCaptureRef.current, { backgroundColor: "#FCFAF4", scale: 2 });
       const imgData = canvas.toDataURL("image/png");
       const orientation = canvas.width >= canvas.height ? "landscape" : "portrait";
       const pdf = new jsPDF({ orientation, unit: "pt", format: [canvas.width, canvas.height] });
@@ -3265,7 +3265,7 @@ export default function SeatingPlanner({
               <div
                 ref={mapContainerRef}
                 className="relative rounded-2xl border p-6 overflow-auto"
-                style={{ borderColor: C.line, backgroundColor: "#FAF8FE" }}
+                style={{ borderColor: C.line, backgroundColor: "#FCFAF4" }}
                 onDragOver={(e) => e.preventDefault()}
               >
                 <div ref={mapCaptureRef} className="relative" style={{ width: layout.width, height: layout.height, minWidth: layout.width }}>
