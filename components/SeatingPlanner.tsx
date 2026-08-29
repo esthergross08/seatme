@@ -61,6 +61,25 @@ interface TableGroup {
   capacity: number | "";
   shape?: TableShape;
 }
+type FixtureType = "danceFloor" | "bar" | "stage";
+interface Fixture {
+  id: string;
+  type: FixtureType;
+  label?: string;
+}
+const FIXTURE_DEFAULTS: Record<FixtureType, { label: string; w: number; h: number; fill: string; border: string }> = {
+  danceFloor: { label: "Dance floor", w: 180, h: 120, fill: "#E8EFE4", border: C.sage },
+  bar: { label: "Bar", w: 140, h: 70, fill: C.goldSoft, border: C.gold },
+  stage: { label: "Stage / band", w: 160, h: 90, fill: "#F1E3E3", border: C.wine },
+};
+// Simple cascading default so a newly-added fixture doesn't stack exactly on top of
+// the last one — purely a starting point, since fixtures are freely draggable afterward.
+function defaultFixturePosition(index: number) {
+  const col = index % 3;
+  const row = Math.floor(index / 3);
+  return { cx: 140 + col * 200, cy: 140 + row * 160 };
+}
+
 type RsvpStatus = "attending" | "pending" | "declined";
 interface Guest {
   id: string;
@@ -113,6 +132,8 @@ interface PlannerData {
   tableNameOverrides?: Record<string, string>;
   tablePositions?: Record<string, { x: number; y: number }>;
   floorPlan?: FloorPlan | null;
+  fixtures?: Fixture[];
+  fixturePositions?: Record<string, { x: number; y: number }>;
 }
 
 interface SeatingPlannerProps {
@@ -813,6 +834,11 @@ export default function SeatingPlanner({
   const [tablePositions, setTablePositions] = useState<Record<string, { x: number; y: number }>>(
     initialData?.tablePositions ?? {}
   );
+  const [fixtures, setFixtures] = useState<Fixture[]>(initialData?.fixtures ?? []);
+  const [fixturePositions, setFixturePositions] = useState<Record<string, { x: number; y: number }>>(
+    initialData?.fixturePositions ?? {}
+  );
+  const [dragFixture, setDragFixture] = useState<{ id: string; x: number; y: number } | null>(null);
   const [floorPlan, setFloorPlan] = useState<FloorPlan | null>(initialData?.floorPlan ?? null);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanError, setFloorPlanError] = useState<string | null>(null);
@@ -888,7 +914,19 @@ export default function SeatingPlanner({
           event_date: eventDate || null,
           location: location || null,
           max_capacity: maxCapacity === "" ? null : maxCapacity,
-          data: { tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions, floorPlan },
+          data: {
+            tableGroups,
+            guests,
+            groups,
+            constraints,
+            seatAssignment,
+            fillMode,
+            tableNameOverrides,
+            tablePositions,
+            floorPlan,
+            fixtures,
+            fixturePositions,
+          },
           updated_at: new Date().toISOString(),
         })
         .eq("id", eventId);
@@ -898,7 +936,23 @@ export default function SeatingPlanner({
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventName, eventDate, location, maxCapacity, tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions, floorPlan]);
+  }, [
+    eventName,
+    eventDate,
+    location,
+    maxCapacity,
+    tableGroups,
+    guests,
+    groups,
+    constraints,
+    seatAssignment,
+    fillMode,
+    tableNameOverrides,
+    tablePositions,
+    floorPlan,
+    fixtures,
+    fixturePositions,
+  ]);
 
   const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
   const tableById = useMemo(() => Object.fromEntries(tables.map((t) => [t.id, t])), [tables]);
@@ -1185,6 +1239,37 @@ export default function SeatingPlanner({
   const moveTable = (tableId: string, x: number, y: number) => {
     if (readOnly) return;
     setTablePositions((m) => ({ ...m, [tableId]: { x, y } }));
+  };
+
+  // ---- fixture handlers (non-seating floor plan elements: dance floor, bar, stage) ----
+  const addFixture = (type: FixtureType) => {
+    if (readOnly) return;
+    setFixtures((f) => [...f, { id: genId(), type }]);
+  };
+  const renameFixture = (id: string, label: string) => {
+    if (readOnly) return;
+    setFixtures((f) => f.map((x) => (x.id === id ? { ...x, label } : x)));
+  };
+  const moveFixture = (fixtureId: string, x: number, y: number) => {
+    if (readOnly) return;
+    setFixturePositions((m) => ({ ...m, [fixtureId]: { x, y } }));
+  };
+  const removeFixtureWithUndo = (id: string) => {
+    if (readOnly) return;
+    const fx = fixtures.find((f) => f.id === id);
+    if (!fx) return;
+    const prevFixtures = fixtures;
+    const prevFixturePositions = fixturePositions;
+    setFixtures((f) => f.filter((x) => x.id !== id));
+    setFixturePositions((m) => {
+      const next = { ...m };
+      delete next[id];
+      return next;
+    });
+    pushUndo(`Removed ${fx.label ?? FIXTURE_DEFAULTS[fx.type].label}.`, () => {
+      setFixtures(prevFixtures);
+      setFixturePositions(prevFixturePositions);
+    });
   };
 
   // ---- guest handlers ----
@@ -2307,6 +2392,59 @@ export default function SeatingPlanner({
               <Plus size={14} /> Add table type
             </button>
 
+            <div className="mt-8">
+              <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.muted }}>
+                Fixtures
+              </div>
+              <p className="text-sm mb-3" style={{ color: C.muted }}>
+                Mark non-seating areas on your floor plan — dance floor, bar, stage — so you can plan around them.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {(Object.keys(FIXTURE_DEFAULTS) as FixtureType[]).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => addFixture(type)}
+                    disabled={readOnly}
+                    className="text-xs font-medium px-3 py-1.5 rounded-full border disabled:opacity-40"
+                    style={{
+                      borderColor: FIXTURE_DEFAULTS[type].border,
+                      color: FIXTURE_DEFAULTS[type].border,
+                      backgroundColor: FIXTURE_DEFAULTS[type].fill,
+                    }}
+                  >
+                    + {FIXTURE_DEFAULTS[type].label}
+                  </button>
+                ))}
+              </div>
+              {fixtures.length > 0 && (
+                <div className="space-y-2">
+                  {fixtures.map((f) => (
+                    <div
+                      key={f.id}
+                      className="flex items-center gap-3 p-2.5 rounded-xl border"
+                      style={{ backgroundColor: C.card, borderColor: C.line }}
+                    >
+                      <span
+                        className="w-3 h-3 rounded-full shrink-0"
+                        style={{ backgroundColor: FIXTURE_DEFAULTS[f.type].border }}
+                      />
+                      <input
+                        value={f.label ?? FIXTURE_DEFAULTS[f.type].label}
+                        onChange={(e) => renameFixture(f.id, e.target.value)}
+                        disabled={readOnly}
+                        aria-label="Fixture name"
+                        className="flex-1 bg-transparent outline-none text-sm"
+                        style={{ color: C.ink }}
+                      />
+                      <IconBtn danger title="Remove fixture" onClick={() => removeFixtureWithUndo(f.id)} disabled={readOnly}>
+                        <Trash2 size={15} />
+                      </IconBtn>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div
               className="mt-8 p-4 rounded-xl text-sm flex items-center gap-2"
               style={{ backgroundColor: seatsShort ? "#F3E4E4" : "#EEF2EA", color: seatsShort ? C.wine : C.sage }}
@@ -3154,6 +3292,98 @@ export default function SeatingPlanner({
                         );
                       })}
                   </svg>
+
+                  {fixtures.map((f, idx) => {
+                    const def = FIXTURE_DEFAULTS[f.type];
+                    const saved = fixturePositions[f.id];
+                    const basePos = saved ? { cx: saved.x, cy: saved.y } : defaultFixturePosition(idx);
+                    const pos = dragFixture && dragFixture.id === f.id ? { cx: dragFixture.x, cy: dragFixture.y } : basePos;
+                    const beginFixtureDrag = (startClientX: number, startClientY: number) => {
+                      const startX = pos.cx;
+                      const startY = pos.cy;
+                      const compute = (clientX: number, clientY: number) => ({
+                        x: Math.max(def.w / 2, startX + (clientX - startClientX)),
+                        y: Math.max(def.h / 2, startY + (clientY - startClientY)),
+                      });
+                      const onMouseMove = (ev: MouseEvent) => setDragFixture({ id: f.id, ...compute(ev.clientX, ev.clientY) });
+                      const onMouseUp = (ev: MouseEvent) => {
+                        const p = compute(ev.clientX, ev.clientY);
+                        moveFixture(f.id, p.x, p.y);
+                        cleanup();
+                      };
+                      const onTouchMove = (ev: TouchEvent) => {
+                        const touch = ev.touches[0];
+                        if (!touch) return;
+                        ev.preventDefault();
+                        setDragFixture({ id: f.id, ...compute(touch.clientX, touch.clientY) });
+                      };
+                      const onTouchEnd = (ev: TouchEvent) => {
+                        const touch = ev.changedTouches[0];
+                        if (touch) {
+                          const p = compute(touch.clientX, touch.clientY);
+                          moveFixture(f.id, p.x, p.y);
+                        }
+                        cleanup();
+                      };
+                      function cleanup() {
+                        setDragFixture(null);
+                        window.removeEventListener("mousemove", onMouseMove);
+                        window.removeEventListener("mouseup", onMouseUp);
+                        window.removeEventListener("touchmove", onTouchMove);
+                        window.removeEventListener("touchend", onTouchEnd);
+                      }
+                      window.addEventListener("mousemove", onMouseMove);
+                      window.addEventListener("mouseup", onMouseUp);
+                      window.addEventListener("touchmove", onTouchMove, { passive: false });
+                      window.addEventListener("touchend", onTouchEnd);
+                    };
+                    const startFixtureDrag = (e: React.MouseEvent) => {
+                      if (readOnly) return;
+                      e.preventDefault();
+                      beginFixtureDrag(e.clientX, e.clientY);
+                    };
+                    const startFixtureDragTouch = (e: React.TouchEvent) => {
+                      if (readOnly) return;
+                      const touch = e.touches[0];
+                      if (!touch) return;
+                      beginFixtureDrag(touch.clientX, touch.clientY);
+                    };
+                    return (
+                      <div
+                        key={f.id}
+                        onMouseDown={startFixtureDrag}
+                        onTouchStart={startFixtureDragTouch}
+                        className="absolute flex items-center justify-center text-center px-2 group"
+                        style={{
+                          left: pos.cx - def.w / 2,
+                          top: pos.cy - def.h / 2,
+                          width: def.w,
+                          height: def.h,
+                          borderRadius: 16,
+                          border: `2px dashed ${def.border}`,
+                          backgroundColor: def.fill,
+                          cursor: readOnly ? "default" : "move",
+                          touchAction: "none",
+                        }}
+                      >
+                        <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: def.border }}>
+                          {f.label ?? def.label}
+                        </span>
+                        {!readOnly && (
+                          <button
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onTouchStart={(e) => e.stopPropagation()}
+                            onClick={() => removeFixtureWithUndo(f.id)}
+                            aria-label={`Remove ${f.label ?? def.label}`}
+                            className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            style={{ backgroundColor: "#fff", border: `1px solid ${def.border}`, color: def.border }}
+                          >
+                            <X size={11} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
 
                   {visibleTables.map((t) => {
                     const basePos = layout.positions[t.id];
