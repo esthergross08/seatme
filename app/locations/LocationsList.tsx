@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MapPin, Plus, Search, Trash2, Undo2, X } from "lucide-react";
+import { FileText, MapPin, Plus, Search, Trash2, Undo2, Upload, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const C = {
@@ -30,8 +30,17 @@ interface LocationRow {
   name: string;
   capacity: number | null;
   table_groups: TableGroupRow[];
+  floor_plan_path: string | null;
+  floor_plan_name: string | null;
   created_at: string;
   updated_at: string;
+}
+
+const FLOOR_PLAN_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp";
+const FLOOR_PLAN_MAX_BYTES = 20 * 1024 * 1024;
+
+function isImagePath(path: string) {
+  return /\.(png|jpe?g|webp)$/i.test(path);
 }
 interface EventRow {
   id: string;
@@ -83,6 +92,9 @@ export default function LocationsList({
   const [name, setName] = useState("");
   const [capacity, setCapacity] = useState("");
   const [rows, setRows] = useState<TableGroupRow[]>([]);
+  const [floorPlanPath, setFloorPlanPath] = useState<string | null>(null);
+  const [floorPlanName, setFloorPlanName] = useState<string | null>(null);
+  const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -117,6 +129,8 @@ export default function LocationsList({
     setName("");
     setCapacity("");
     setRows([]);
+    setFloorPlanPath(null);
+    setFloorPlanName(null);
     setFormError(null);
     setModalOpen(true);
   }
@@ -126,8 +140,53 @@ export default function LocationsList({
     setName(loc.name);
     setCapacity(loc.capacity == null ? "" : String(loc.capacity));
     setRows(loc.table_groups.map((g) => ({ ...g })));
+    setFloorPlanPath(loc.floor_plan_path);
+    setFloorPlanName(loc.floor_plan_name);
     setFormError(null);
     setModalOpen(true);
+  }
+
+  function floorPlanPublicUrl(path: string) {
+    return createClient().storage.from("floor-plans").getPublicUrl(path).data.publicUrl;
+  }
+
+  // Uploads immediately on file select (independent of Save) using a random path under
+  // this owner's own folder, decoupled from the location's own id — so it works the same
+  // way whether you're editing an existing location or still filling out a brand new one
+  // that hasn't been saved yet. The path/name just ride along in the form and get written
+  // to the row on Save like any other field.
+  async function handleFloorPlanUpload(file: File) {
+    setFormError(null);
+    if (file.size > FLOOR_PLAN_MAX_BYTES) {
+      setFormError("That file is too large — keep it under 20MB.");
+      return;
+    }
+    const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
+    const path = `locations/${ownerId}/${crypto.randomUUID()}.${ext}`;
+    setFloorPlanUploading(true);
+    const supabase = createClient();
+    const { error: uploadError } = await supabase.storage
+      .from("floor-plans")
+      .upload(path, file, { contentType: file.type || undefined });
+    setFloorPlanUploading(false);
+    if (uploadError) {
+      setFormError(`Couldn't upload that file: ${uploadError.message}`);
+      return;
+    }
+    // Replacing an existing plan — clean up the old file now that the new one is in place.
+    if (floorPlanPath) {
+      await supabase.storage.from("floor-plans").remove([floorPlanPath]);
+    }
+    setFloorPlanPath(path);
+    setFloorPlanName(file.name);
+  }
+
+  async function handleFloorPlanRemove() {
+    if (floorPlanPath) {
+      await createClient().storage.from("floor-plans").remove([floorPlanPath]);
+    }
+    setFloorPlanPath(null);
+    setFloorPlanName(null);
   }
 
   function addRow() {
@@ -155,6 +214,8 @@ export default function LocationsList({
       name: trimmed,
       capacity: capacity === "" ? null : Number(capacity),
       table_groups: rows.map((r) => ({ ...r, count: Number(r.count) || 1, capacity: Number(r.capacity) || 1 })),
+      floor_plan_path: floorPlanPath,
+      floor_plan_name: floorPlanName,
       updated_at: new Date().toISOString(),
     };
     const { error: saveError } = editingId
@@ -277,6 +338,18 @@ export default function LocationsList({
                   <div className="text-xs mt-1" style={{ color: C.muted }}>
                     {summarizeTableGroups(loc.table_groups)}
                   </div>
+                  {loc.floor_plan_path && (
+                    <a
+                      href={floorPlanPublicUrl(loc.floor_plan_path)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs mt-1 inline-flex items-center gap-1"
+                      style={{ color: C.gold }}
+                    >
+                      <FileText size={12} />
+                      {loc.floor_plan_name || "Floor plan"}
+                    </a>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
@@ -484,6 +557,61 @@ export default function LocationsList({
                     </div>
                   ))}
                 </div>
+              </div>
+
+              <div>
+                <span className="text-xs font-medium block mb-1.5" style={{ color: C.ink }}>
+                  Venue floor plan
+                </span>
+                {floorPlanPath ? (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg border" style={{ borderColor: C.line }}>
+                    {isImagePath(floorPlanPath) ? (
+                      <img
+                        src={floorPlanPublicUrl(floorPlanPath)}
+                        alt=""
+                        className="w-10 h-10 rounded object-cover shrink-0"
+                      />
+                    ) : (
+                      <FileText size={20} style={{ color: C.gold }} className="shrink-0" />
+                    )}
+                    <a
+                      href={floorPlanPublicUrl(floorPlanPath)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs truncate flex-1"
+                      style={{ color: C.ink }}
+                    >
+                      {floorPlanName || "View floor plan"}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={handleFloorPlanRemove}
+                      className="text-xs font-semibold shrink-0"
+                      style={{ color: C.wine, background: "none", border: "none", cursor: "pointer" }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <label
+                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-dashed text-xs cursor-pointer"
+                    style={{ borderColor: C.line, color: C.muted }}
+                  >
+                    <Upload size={14} />
+                    {floorPlanUploading ? "Uploading…" : "Upload a PDF or image of the venue's seat plan"}
+                    <input
+                      type="file"
+                      accept={FLOOR_PLAN_ACCEPT}
+                      disabled={floorPlanUploading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleFloorPlanUpload(file);
+                        e.target.value = "";
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                )}
               </div>
 
               {formError && (

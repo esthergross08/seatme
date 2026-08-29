@@ -16,6 +16,7 @@ import {
   Palette,
   Download,
   FileImage,
+  FileText,
   StickyNote,
   Link2,
   Shuffle,
@@ -97,6 +98,11 @@ interface Member {
   role: string;
 }
 
+interface FloorPlan {
+  path: string;
+  name: string;
+}
+
 interface PlannerData {
   tableGroups?: TableGroup[];
   guests?: Guest[];
@@ -106,6 +112,7 @@ interface PlannerData {
   fillMode?: FillMode;
   tableNameOverrides?: Record<string, string>;
   tablePositions?: Record<string, { x: number; y: number }>;
+  floorPlan?: FloorPlan | null;
 }
 
 interface SeatingPlannerProps {
@@ -806,6 +813,9 @@ export default function SeatingPlanner({
   const [tablePositions, setTablePositions] = useState<Record<string, { x: number; y: number }>>(
     initialData?.tablePositions ?? {}
   );
+  const [floorPlan, setFloorPlan] = useState<FloorPlan | null>(initialData?.floorPlan ?? null);
+  const [floorPlanUploading, setFloorPlanUploading] = useState(false);
+  const [floorPlanError, setFloorPlanError] = useState<string | null>(null);
   const [guestSearch, setGuestSearch] = useState("");
   const [compactGuestRows, setCompactGuestRows] = useState(false);
   const [undo, setUndo] = useState<{ message: string; restore: () => void } | null>(null);
@@ -876,7 +886,7 @@ export default function SeatingPlanner({
           event_date: eventDate || null,
           location: location || null,
           max_capacity: maxCapacity === "" ? null : maxCapacity,
-          data: { tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions },
+          data: { tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions, floorPlan },
           updated_at: new Date().toISOString(),
         })
         .eq("id", eventId);
@@ -886,7 +896,7 @@ export default function SeatingPlanner({
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventName, eventDate, location, maxCapacity, tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions]);
+  }, [eventName, eventDate, location, maxCapacity, tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions, floorPlan]);
 
   const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
   const tableById = useMemo(() => Object.fromEntries(tables.map((t) => [t.id, t])), [tables]);
@@ -1275,6 +1285,46 @@ export default function SeatingPlanner({
       withRsvpData,
       withMealData,
     });
+  }
+
+  const FLOOR_PLAN_MAX_BYTES = 20 * 1024 * 1024;
+
+  // Uploads under this event's own folder so the storage RLS policy (which checks
+  // owner/editor via the same is_event_owner/is_event_editor functions used everywhere
+  // else) can grant access to collaborators, not just the owner.
+  async function handleFloorPlanUpload(file: File) {
+    if (readOnly) return;
+    setFloorPlanError(null);
+    if (file.size > FLOOR_PLAN_MAX_BYTES) {
+      setFloorPlanError("That file is too large — keep it under 20MB.");
+      return;
+    }
+    const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
+    const path = `events/${eventId}/${crypto.randomUUID()}.${ext}`;
+    setFloorPlanUploading(true);
+    const supabase = createClient();
+    const { error: uploadError } = await supabase.storage
+      .from("floor-plans")
+      .upload(path, file, { contentType: file.type || undefined });
+    setFloorPlanUploading(false);
+    if (uploadError) {
+      setFloorPlanError(`Couldn't upload that file: ${uploadError.message}`);
+      return;
+    }
+    if (floorPlan) {
+      await supabase.storage.from("floor-plans").remove([floorPlan.path]);
+    }
+    setFloorPlan({ path, name: file.name });
+  }
+
+  async function handleFloorPlanRemove() {
+    if (readOnly || !floorPlan) return;
+    await createClient().storage.from("floor-plans").remove([floorPlan.path]);
+    setFloorPlan(null);
+  }
+
+  function floorPlanPublicUrl(path: string) {
+    return createClient().storage.from("floor-plans").getPublicUrl(path).data.publicUrl;
   }
 
   function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -2218,6 +2268,61 @@ export default function SeatingPlanner({
                   : `${activeGuests.length} of ${maxCapacity} max capacity.`}
               </div>
             )}
+
+            <div className="mt-8">
+              <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.muted }}>
+                Venue floor plan
+              </div>
+              {floorPlan ? (
+                <div className="flex items-center gap-3 p-3 rounded-xl border" style={{ backgroundColor: C.card, borderColor: C.line }}>
+                  {/\.(png|jpe?g|webp)$/i.test(floorPlan.path) ? (
+                    <img src={floorPlanPublicUrl(floorPlan.path)} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
+                  ) : (
+                    <FileText size={22} style={{ color: C.gold }} className="shrink-0" />
+                  )}
+                  <a
+                    href={floorPlanPublicUrl(floorPlan.path)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm truncate flex-1"
+                    style={{ color: C.ink }}
+                  >
+                    {floorPlan.name}
+                  </a>
+                  {!readOnly && (
+                    <IconBtn danger title="Remove floor plan" onClick={handleFloorPlanRemove}>
+                      <Trash2 size={15} />
+                    </IconBtn>
+                  )}
+                </div>
+              ) : (
+                !readOnly && (
+                  <label
+                    className="flex items-center justify-center gap-2 p-4 rounded-xl border border-dashed text-sm cursor-pointer"
+                    style={{ borderColor: C.line, color: C.muted }}
+                  >
+                    <Upload size={15} />
+                    {floorPlanUploading ? "Uploading…" : "Upload a PDF or image of the venue's seat plan"}
+                    <input
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,.webp"
+                      disabled={floorPlanUploading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleFloorPlanUpload(file);
+                        e.target.value = "";
+                      }}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                )
+              )}
+              {floorPlanError && (
+                <p className="text-xs mt-1.5" style={{ color: C.wine }}>
+                  {floorPlanError}
+                </p>
+              )}
+            </div>
           </div>
         )}
 

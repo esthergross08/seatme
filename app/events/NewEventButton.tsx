@@ -29,6 +29,8 @@ interface SavedLocation {
   name: string;
   capacity: number | null;
   table_groups: unknown[];
+  floor_plan_path: string | null;
+  floor_plan_name: string | null;
 }
 
 function formatEventDate(dateStr: string) {
@@ -78,7 +80,10 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
           .not("location", "is", null)
           .order("updated_at", { ascending: false })
           .limit(50),
-        supabase.from("locations").select("id, name, capacity, table_groups").eq("owner_id", ownerId),
+        supabase
+          .from("locations")
+          .select("id, name, capacity, table_groups, floor_plan_path, floor_plan_name")
+          .eq("owner_id", ownerId),
       ]);
       if (!cancelled) {
         setPastEvents((eventsData as PastEvent[]) ?? []);
@@ -181,6 +186,26 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
       setError(error?.message || "Couldn't create the event.");
       return;
     }
+
+    // Copy (not reference) the location's floor plan into this event's own storage
+    // folder — sharing the exact same file would mean removing it from one place
+    // deletes it from the other, which isn't what "reuse" should mean here. Best
+    // effort: if this fails, the event still exists, just without the floor plan
+    // pre-attached, and it can be uploaded manually from the Tables tab.
+    if (copySetup && matchedLocation?.floor_plan_path) {
+      const ext = matchedLocation.floor_plan_path.split(".").pop() || "bin";
+      const destPath = `events/${data.id}/${crypto.randomUUID()}.${ext}`;
+      const { error: copyError } = await supabase.storage
+        .from("floor-plans")
+        .copy(matchedLocation.floor_plan_path, destPath);
+      if (!copyError) {
+        await supabase
+          .from("events")
+          .update({ data: { ...seedData, floorPlan: { path: destPath, name: matchedLocation.floor_plan_name || "Floor plan" } } })
+          .eq("id", data.id);
+      }
+    }
+
     router.push(`/events/${data.id}`);
   }
 
