@@ -212,59 +212,122 @@ function shapeRadius(shape: TableShape) {
   }
 }
 
-function computeLayout(tables: Table[], positionOverrides: Record<string, { x: number; y: number }> = {}) {
+// Where seat i of n sits around a table, as an offset from the table's center. Round
+// and oval tables use an elliptical ring (matching each shape's actual w/h, so an oval's
+// short axis doesn't leave seats floating far from the table edge). Square and rectangle
+// tables walk evenly spaced points around the rectangle's perimeter instead — guests at a
+// rectangular table sit along its straight sides in real life, not in a circle floating
+// around it, and a circular ring around a rectangle made it hard to tell who's actually
+// next to whom (which matters for "must sit adjacent" constraints).
+function rectPerimeterPoint(rw: number, rh: number, frac: number) {
+  const segs: [number, [number, number], [number, number]][] = [
+    [rw, [0, -rh], [rw, -rh]],
+    [2 * rh, [rw, -rh], [rw, rh]],
+    [2 * rw, [rw, rh], [-rw, rh]],
+    [2 * rh, [-rw, rh], [-rw, -rh]],
+    [rw, [-rw, -rh], [0, -rh]],
+  ];
+  const total = segs.reduce((s, [len]) => s + len, 0);
+  let target = ((frac % 1) + 1) % 1 * total;
+  for (let i = 0; i < segs.length; i++) {
+    const [len, from, to] = segs[i];
+    if (target <= len || i === segs.length - 1) {
+      const t = len === 0 ? 0 : target / len;
+      return { dx: from[0] + (to[0] - from[0]) * t, dy: from[1] + (to[1] - from[1]) * t };
+    }
+    target -= len;
+  }
+  return { dx: 0, dy: -rh };
+}
+
+function seatOffset(shape: TableShape, w: number, h: number, i: number, n: number, pad: number) {
+  const rw = w / 2 + pad;
+  const rh = h / 2 + pad;
+  if (shape === "square" || shape === "rectangle") {
+    return rectPerimeterPoint(rw, rh, n > 0 ? i / n : 0);
+  }
+  const angle = -Math.PI / 2 + (2 * Math.PI * i) / (n || 1);
+  return { dx: rw * Math.cos(angle), dy: rh * Math.sin(angle) };
+}
+
+function computeLayout(
+  tables: Table[],
+  positionOverrides: Record<string, { x: number; y: number }> = {},
+  fitBounds?: { width: number; height: number }
+) {
   const autoTables = tables.filter((t) => !positionOverrides[t.id]);
+  const tableCount = tables.length || 1;
 
   // Tables scale up when there are only a few of them, so a lone table (or a small
   // handful) actually fills the canvas instead of sitting small in the corner —
   // tapering back down to the normal baseline size by around 5-6 tables, where a
   // bigger size would just mean more scrolling instead of a better view. Capped at
-  // 2.4x so a single table doesn't become absurd on its own.
-  const tableCount = tables.length || 1;
-  const scale = Math.max(1, Math.min(2.4, 2.4 / Math.sqrt(tableCount)));
+  // 2.4x so a single table doesn't become absurd on its own — and further capped by
+  // fitBounds (the actual visible space on screen) so growing a table never pushes
+  // its own guests out of view, which is the whole point of making it bigger.
+  const countScale = Math.max(1, Math.min(2.4, 2.4 / Math.sqrt(tableCount)));
 
-  // Precompute each table's footprint first (shape + capacity + how wide its name
-  // needs it to be) so the auto-placement grid can be spaced to fit the biggest
-  // one, rather than assuming every table is the same small size. Without this, a
-  // table with a long custom name could end up wider than the fixed grid cell and
-  // overlap its neighbor's name tag.
-  const dims: Record<string, { r: number; w: number; h: number; seatR: number }> = {};
-  let maxSeatR = 0;
-  tables.forEach((t) => {
-    const r = Math.min(58, 34 + t.capacity * 3.2) * scale;
-    const { w, h } = shapeDims(t.shape, r, minTableTextWidth(t.label));
-    const seatR = Math.max(w, h) / 2 + 34;
-    dims[t.id] = { r, w, h, seatR };
-    if (!positionOverrides[t.id]) maxSeatR = Math.max(maxSeatR, seatR);
-  });
+  function build(scale: number) {
+    // Precompute each table's footprint first (shape + capacity + how wide its name
+    // needs it to be) so the auto-placement grid can be spaced to fit the biggest
+    // one, rather than assuming every table is the same small size. Without this, a
+    // table with a long custom name could end up wider than the fixed grid cell and
+    // overlap its neighbor's name tag.
+    const dims: Record<string, { r: number; w: number; h: number; seatR: number }> = {};
+    let maxSeatR = 0;
+    tables.forEach((t) => {
+      const r = Math.min(58, 34 + t.capacity * 3.2) * scale;
+      const { w, h } = shapeDims(t.shape, r, minTableTextWidth(t.label));
+      const seatR = Math.max(w, h) / 2 + 34;
+      dims[t.id] = { r, w, h, seatR };
+      if (!positionOverrides[t.id]) maxSeatR = Math.max(maxSeatR, seatR);
+    });
 
-  const cols = Math.max(1, Math.ceil(Math.sqrt(autoTables.length || 1)));
-  const cell = Math.max(250, maxSeatR * 2 + 40);
-  const positions: Record<string, { cx: number; cy: number; r: number; w: number; h: number; seatR: number }> = {};
-  let autoIdx = 0;
-  let maxX = cell;
-  let maxY = cell;
-  tables.forEach((t) => {
-    const { r, w, h, seatR } = dims[t.id];
-    const override = positionOverrides[t.id];
-    let cx: number, cy: number;
-    if (override) {
-      cx = override.x;
-      cy = override.y;
+    const cols = Math.max(1, Math.ceil(Math.sqrt(autoTables.length || 1)));
+    const cell = Math.max(250, maxSeatR * 2 + 40);
+    const positions: Record<string, { cx: number; cy: number; r: number; w: number; h: number; seatR: number }> = {};
+    let autoIdx = 0;
+    let maxX = cell;
+    let maxY = cell;
+    tables.forEach((t) => {
+      const { r, w, h, seatR } = dims[t.id];
+      const override = positionOverrides[t.id];
+      let cx: number, cy: number;
+      if (override) {
+        cx = override.x;
+        cy = override.y;
+      } else {
+        const col = autoIdx % cols;
+        const row = Math.floor(autoIdx / cols);
+        cx = col * cell + cell / 2;
+        cy = row * cell + cell / 2;
+        autoIdx++;
+      }
+      positions[t.id] = { cx, cy, r, w, h, seatR };
+      maxX = Math.max(maxX, cx + seatR + 20);
+      maxY = Math.max(maxY, cy + seatR + 20);
+    });
+    const rows = Math.ceil(autoTables.length / cols);
+    const gridHeight = Math.max(cell, rows * cell);
+    return { positions, width: Math.max(cols * cell, maxX), height: Math.max(gridHeight, maxY) };
+  }
+
+  let scale = countScale;
+  if (fitBounds && fitBounds.width > 0 && fitBounds.height > 0) {
+    const atBaseline = build(1);
+    // Only grow past the baseline size if there's actually room to — and never grow
+    // past what fits. If even the baseline doesn't fit (a big plan with lots of
+    // tables), leave it at baseline rather than shrinking further; that case is
+    // expected to scroll, same as before.
+    if (atBaseline.width <= fitBounds.width && atBaseline.height <= fitBounds.height) {
+      const fitScale = Math.min(fitBounds.width / atBaseline.width, fitBounds.height / atBaseline.height);
+      scale = Math.max(1, Math.min(countScale, fitScale));
     } else {
-      const col = autoIdx % cols;
-      const row = Math.floor(autoIdx / cols);
-      cx = col * cell + cell / 2;
-      cy = row * cell + cell / 2;
-      autoIdx++;
+      scale = 1;
     }
-    positions[t.id] = { cx, cy, r, w, h, seatR };
-    maxX = Math.max(maxX, cx + seatR + 20);
-    maxY = Math.max(maxY, cy + seatR + 20);
-  });
-  const rows = Math.ceil(autoTables.length / cols);
-  const gridHeight = Math.max(cell, rows * cell);
-  return { positions, width: Math.max(cols * cell, maxX), height: Math.max(gridHeight, maxY) };
+  }
+
+  return build(scale);
 }
 
 // ---------- constraint expansion (groups -> flat guest pairs) ----------
@@ -755,7 +818,35 @@ export default function SeatingPlanner({
   const [showImportHelp, setShowImportHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mapCaptureRef = useRef<HTMLDivElement>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
+
+  // How much on-screen room the map actually has, so table auto-scaling (below) can grow
+  // tables to fill it without overshooting into "now I have to scroll to see half the
+  // guests" — which defeats the point of making a table bigger in the first place.
+  // Width comes from the container's own box; height is viewport-relative (the container
+  // has no fixed height of its own, it just grows to fit whatever we draw), so it's based
+  // on how much vertical space is left below the container's current position.
+  const [canvasBudget, setCanvasBudget] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const el = mapContainerRef.current;
+    if (!el || seatingView !== "map") return;
+    function measure() {
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const width = Math.max(320, el.clientWidth - 48); // minus the container's own p-6 padding
+      const height = Math.max(320, window.innerHeight - rect.top - 140); // leave room below for comfort
+      setCanvasBudget((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+    }
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [seatingView]);
 
   // ---- Supabase autosave ----
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -811,7 +902,10 @@ export default function SeatingPlanner({
   }, [tables, activeTableIds, showAllTables, occupiedTableIds]);
 
   const hiddenTableCount = tables.length - visibleTables.length;
-  const layout = useMemo(() => computeLayout(visibleTables, tablePositions), [visibleTables, tablePositions]);
+  const layout = useMemo(
+    () => computeLayout(visibleTables, tablePositions, canvasBudget),
+    [visibleTables, tablePositions, canvasBudget]
+  );
 
   const guestById = useMemo(() => Object.fromEntries(guests.map((g) => [g.id, g])), [guests]);
   const visibleGuests = useMemo(() => {
@@ -994,11 +1088,9 @@ export default function SeatingPlanner({
     const s = seatsById[seatId];
     if (!s) return { x: 0, y: 0 };
     const pos = layout.positions[s.tableId];
-    const angle = -Math.PI / 2 + (2 * Math.PI * s.seatIdx) / s.capacity;
-    return {
-      x: pos.cx + pos.seatR * Math.cos(angle),
-      y: pos.cy + pos.seatR * Math.sin(angle),
-    };
+    const shape = tableById[s.tableId]?.shape ?? "round";
+    const { dx, dy } = seatOffset(shape, pos.w, pos.h, s.seatIdx, s.capacity, 34);
+    return { x: pos.cx + dx, y: pos.cy + dy };
   }
 
   // ---- undo (destructive actions stay instant — no confirm — but offer a brief undo) ----
@@ -2796,7 +2888,12 @@ export default function SeatingPlanner({
             )}
 
             {seatingView === "map" ? (
-              <div className="relative rounded-2xl border p-6 overflow-auto" style={{ borderColor: C.line, backgroundColor: "#FCFAF4" }} onDragOver={(e) => e.preventDefault()}>
+              <div
+                ref={mapContainerRef}
+                className="relative rounded-2xl border p-6 overflow-auto"
+                style={{ borderColor: C.line, backgroundColor: "#FCFAF4" }}
+                onDragOver={(e) => e.preventDefault()}
+              >
                 <div ref={mapCaptureRef} className="relative" style={{ width: layout.width, height: layout.height, minWidth: layout.width }}>
                   <svg className="absolute inset-0 pointer-events-none" width={layout.width} height={layout.height}>
                     {flatViolations
@@ -2916,9 +3013,9 @@ export default function SeatingPlanner({
                         </div>
                         {Array.from({ length: t.capacity }).map((_, i) => {
                           const seatId = `${t.id}#${i}`;
-                          const angle = -Math.PI / 2 + (2 * Math.PI * i) / t.capacity;
-                          const x = pos.cx + pos.seatR * Math.cos(angle);
-                          const y = pos.cy + pos.seatR * Math.sin(angle);
+                          const { dx, dy } = seatOffset(t.shape, pos.w, pos.h, i, t.capacity, 34);
+                          const x = pos.cx + dx;
+                          const y = pos.cy + dy;
                           const guestId = seatAssignment[seatId];
                           const guest = guestId ? guestById[guestId] : null;
                           const guestName = guest?.name ?? null;
