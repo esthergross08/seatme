@@ -114,6 +114,9 @@ interface SeatingPlannerProps {
   initialData: PlannerData | null;
   role: Role;
   members: Member[];
+  initialEventDate?: string | null;
+  initialLocation?: string | null;
+  initialMaxCapacity?: number | null;
 }
 
 // ---------- geometry helpers ----------
@@ -658,10 +661,22 @@ function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
 }
 
 // ---------- main component ----------
-export default function SeatingPlanner({ eventId, initialName, initialData, role, members }: SeatingPlannerProps) {
+export default function SeatingPlanner({
+  eventId,
+  initialName,
+  initialData,
+  role,
+  members,
+  initialEventDate,
+  initialLocation,
+  initialMaxCapacity,
+}: SeatingPlannerProps) {
   const readOnly = role === "viewer";
 
   const [eventName, setEventName] = useState(initialName || "Untitled event");
+  const [eventDate, setEventDate] = useState(initialEventDate ?? "");
+  const [location, setLocation] = useState(initialLocation ?? "");
+  const [maxCapacity, setMaxCapacity] = useState<number | "">(initialMaxCapacity ?? "");
   const [tab, setTab] = useState("setup");
   const [tableGroups, setTableGroups] = useState<TableGroup[]>(initialData?.tableGroups ?? []);
   const [guests, setGuests] = useState<Guest[]>(initialData?.guests ?? []);
@@ -724,6 +739,9 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
         .from("events")
         .update({
           name: eventName,
+          event_date: eventDate || null,
+          location: location || null,
+          max_capacity: maxCapacity === "" ? null : maxCapacity,
           data: { tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions },
           updated_at: new Date().toISOString(),
         })
@@ -734,7 +752,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventName, tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions]);
+  }, [eventName, eventDate, location, maxCapacity, tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, tablePositions]);
 
   const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
   const tableById = useMemo(() => Object.fromEntries(tables.map((t) => [t.id, t])), [tables]);
@@ -1746,6 +1764,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   }
 
   const seatsShort = totalSeats < guests.length;
+  const capacityExceeded = maxCapacity !== "" && activeGuests.length > Number(maxCapacity);
 
   const PANE_ORDER = [
     { id: "setup", label: "Tables" },
@@ -1778,6 +1797,51 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
             {readOnly ? "View only" : saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Save failed" : saveStatus === "saved" ? "Saved" : ""}
           </div>
         </div>
+
+        <div className="mb-4 flex flex-col gap-1.5 text-xs">
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px]" style={{ color: C.muted }}>
+              Date
+            </span>
+            <input
+              type="date"
+              value={eventDate}
+              onChange={(e) => setEventDate(e.target.value)}
+              disabled={readOnly}
+              className="px-1.5 py-1 rounded-md border text-xs bg-transparent outline-none"
+              style={{ borderColor: C.line, color: C.ink }}
+            />
+          </label>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px]" style={{ color: C.muted }}>
+              Location
+            </span>
+            <input
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              disabled={readOnly}
+              placeholder="Venue, city…"
+              className="px-1.5 py-1 rounded-md border text-xs bg-transparent outline-none"
+              style={{ borderColor: C.line, color: C.ink }}
+            />
+          </label>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px]" style={{ color: C.muted }}>
+              Max capacity
+            </span>
+            <input
+              type="number"
+              min={0}
+              value={maxCapacity}
+              onChange={(e) => setMaxCapacity(e.target.value === "" ? "" : Number(e.target.value))}
+              disabled={readOnly}
+              placeholder="Optional"
+              className="px-1.5 py-1 rounded-md border text-xs bg-transparent outline-none"
+              style={{ borderColor: C.line, color: C.ink }}
+            />
+          </label>
+        </div>
+
         {[
           { id: "setup", label: "1. Tables", icon: Table2 },
           { id: "guests", label: "2. Guests & rules", icon: Users },
@@ -1813,7 +1877,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
         <div className="mt-auto pt-6 text-xs leading-relaxed" style={{ color: C.muted }}>
           <div className="flex justify-between py-0.5">
             <span>Guests</span>
-            <span>{guests.length}</span>
+            <span style={{ color: capacityExceeded ? C.wine : C.muted }}>{guests.length}</span>
           </div>
           <div className="flex justify-between py-0.5">
             <span>Tables</span>
@@ -1823,6 +1887,14 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
             <span>Seats</span>
             <span style={{ color: seatsShort ? C.wine : C.muted }}>{totalSeats}</span>
           </div>
+          {maxCapacity !== "" && (
+            <div className="flex justify-between py-0.5">
+              <span>Capacity</span>
+              <span style={{ color: capacityExceeded ? C.wine : C.muted }}>
+                {activeGuests.length}/{maxCapacity}
+              </span>
+            </div>
+          )}
         </div>
 
         {role === "owner" && (
@@ -1872,6 +1944,37 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
           />
           <div className="mt-1 text-[10px]" style={{ color: C.muted }}>
             {readOnly ? "View only" : saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Save failed" : saveStatus === "saved" ? "Saved" : ""}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+            <input
+              type="date"
+              value={eventDate}
+              onChange={(e) => setEventDate(e.target.value)}
+              disabled={readOnly}
+              aria-label="Event date"
+              className="px-2 py-1.5 rounded-lg border bg-transparent outline-none"
+              style={{ borderColor: C.line, color: C.ink }}
+            />
+            <input
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              disabled={readOnly}
+              placeholder="Location"
+              aria-label="Location"
+              className="flex-1 min-w-[120px] px-2 py-1.5 rounded-lg border bg-transparent outline-none"
+              style={{ borderColor: C.line, color: C.ink }}
+            />
+            <input
+              type="number"
+              min={0}
+              value={maxCapacity}
+              onChange={(e) => setMaxCapacity(e.target.value === "" ? "" : Number(e.target.value))}
+              disabled={readOnly}
+              placeholder="Max capacity"
+              aria-label="Max capacity"
+              className="w-28 px-2 py-1.5 rounded-lg border bg-transparent outline-none"
+              style={{ borderColor: C.line, color: C.ink }}
+            />
           </div>
         </div>
 
@@ -1968,6 +2071,18 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                 ? `You have ${guests.length} guests but only ${totalSeats} seats. Add more tables before generating a plan.`
                 : `${totalSeats} seats configured for ${guests.length} guests — ${totalSeats - guests.length} spare.`}
             </div>
+
+            {maxCapacity !== "" && (
+              <div
+                className="mt-3 p-4 rounded-xl text-sm flex items-center gap-2"
+                style={{ backgroundColor: capacityExceeded ? "#F3E4E4" : "#EEF2EA", color: capacityExceeded ? C.wine : C.sage }}
+              >
+                {capacityExceeded ? <AlertTriangle size={16} /> : <Check size={16} />}
+                {capacityExceeded
+                  ? `${activeGuests.length} guests exceeds your venue's max capacity of ${maxCapacity}.`
+                  : `${activeGuests.length} of ${maxCapacity} max capacity.`}
+              </div>
+            )}
           </div>
         )}
 

@@ -18,6 +18,17 @@ interface EventRow {
   name: string | null;
   owner_id: string;
   updated_at: string;
+  event_date?: string | null;
+  location?: string | null;
+  max_capacity?: number | null;
+}
+
+function formatEventDate(dateStr: string) {
+  // Parse as a plain calendar date (no timezone shift) rather than via `new Date(dateStr)`,
+  // which treats a bare "YYYY-MM-DD" as UTC midnight and can display a day early/late
+  // depending on the viewer's timezone.
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 type SortBy = "recent" | "name";
@@ -126,6 +137,11 @@ export default function EventsList({ events, userId }: { events: EventRow[]; use
                   </span>
                 )}
               </div>
+              {(ev.event_date || ev.location) && (
+                <div className="text-xs mt-1" style={{ color: C.ink }}>
+                  {[ev.event_date ? formatEventDate(ev.event_date) : null, ev.location || null].filter(Boolean).join(" · ")}
+                </div>
+              )}
               <div className="text-xs mt-1" style={{ color: C.muted }}>
                 Updated {new Date(ev.updated_at).toLocaleDateString()}
               </div>

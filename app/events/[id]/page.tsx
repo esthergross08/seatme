@@ -41,6 +41,9 @@ export default async function EventPage({
       initialData={event.data ?? null}
       role={role as "owner" | "editor" | "viewer"}
       members={members ?? []}
+      initialEventDate={event.event_date ?? null}
+      initialLocation={event.location ?? null}
+      initialMaxCapacity={event.max_capacity ?? null}
     />
   );
 }
