@@ -171,16 +171,31 @@ function areAdjacent(i: number, j: number, n: number) {
   return d === 1 || d === n - 1;
 }
 
-function shapeDims(shape: TableShape, r: number) {
+// Rough px-per-character estimate for the 11px table-name input, plus room for
+// the box's own horizontal padding — used to grow tables so a long custom name
+// (e.g. "The Smith-Jones Family") gets space instead of clipping or, worse,
+// forcing tables close enough together that neighboring name tags overlap.
+function minTableTextWidth(label: string) {
+  return Math.max(64, label.length * 6.2 + 24);
+}
+
+function shapeDims(shape: TableShape, r: number, minTextWidth = 0) {
   switch (shape) {
     case "oval":
-      return { w: r * 2.5, h: r * 1.5 };
-    case "square":
-      return { w: r * 1.8, h: r * 1.8 };
+      return { w: Math.max(r * 2.5, minTextWidth), h: r * 1.5 };
     case "rectangle":
-      return { w: r * 2.6, h: r * 1.5 };
-    default:
-      return { w: r * 2, h: r * 2 };
+      return { w: Math.max(r * 2.6, minTextWidth), h: r * 1.5 };
+    case "square": {
+      // Grow both sides together so it stays a square rather than a wide rectangle.
+      const d = Math.max(r * 1.8, minTextWidth);
+      return { w: d, h: d };
+    }
+    default: {
+      // Round tables: grow the diameter uniformly so a long name still yields a circle,
+      // not an ellipse.
+      const d = Math.max(r * 2, minTextWidth);
+      return { w: d, h: d };
+    }
   }
 }
 
@@ -199,16 +214,30 @@ function shapeRadius(shape: TableShape) {
 
 function computeLayout(tables: Table[], positionOverrides: Record<string, { x: number; y: number }> = {}) {
   const autoTables = tables.filter((t) => !positionOverrides[t.id]);
+
+  // Precompute each table's footprint first (shape + capacity + how wide its name
+  // needs it to be) so the auto-placement grid can be spaced to fit the biggest
+  // one, rather than assuming every table is the same small size. Without this, a
+  // table with a long custom name could end up wider than the fixed grid cell and
+  // overlap its neighbor's name tag.
+  const dims: Record<string, { r: number; w: number; h: number; seatR: number }> = {};
+  let maxSeatR = 0;
+  tables.forEach((t) => {
+    const r = Math.min(58, 34 + t.capacity * 3.2);
+    const { w, h } = shapeDims(t.shape, r, minTableTextWidth(t.label));
+    const seatR = Math.max(w, h) / 2 + 34;
+    dims[t.id] = { r, w, h, seatR };
+    if (!positionOverrides[t.id]) maxSeatR = Math.max(maxSeatR, seatR);
+  });
+
   const cols = Math.max(1, Math.ceil(Math.sqrt(autoTables.length || 1)));
-  const cell = 250;
+  const cell = Math.max(250, maxSeatR * 2 + 40);
   const positions: Record<string, { cx: number; cy: number; r: number; w: number; h: number; seatR: number }> = {};
   let autoIdx = 0;
   let maxX = cell;
   let maxY = cell;
   tables.forEach((t) => {
-    const r = Math.min(58, 34 + t.capacity * 3.2);
-    const { w, h } = shapeDims(t.shape, r);
-    const seatR = Math.max(w, h) / 2 + 34;
+    const { r, w, h, seatR } = dims[t.id];
     const override = positionOverrides[t.id];
     let cx: number, cy: number;
     if (override) {
