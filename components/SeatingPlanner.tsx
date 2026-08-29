@@ -2177,20 +2177,6 @@ export default function SeatingPlanner({
                   className="text-[11px] bg-transparent outline-none rounded w-28"
                   style={{ color: C.muted }}
                 />
-                <span className="text-[11px]" style={{ color: C.line }}>
-                  ·
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  value={maxCapacity}
-                  onChange={(e) => setMaxCapacity(e.target.value === "" ? "" : Number(e.target.value))}
-                  disabled={readOnly}
-                  placeholder="Max cap."
-                  aria-label="Max capacity"
-                  className="text-[11px] bg-transparent outline-none rounded w-16"
-                  style={{ color: C.muted }}
-                />
               </div>
             </div>
           </div>
@@ -2206,14 +2192,20 @@ export default function SeatingPlanner({
               <span>
                 Seats <b style={{ color: seatsShort ? C.wine : C.ink }}>{totalSeats}</b>
               </span>
-              {maxCapacity !== "" && (
-                <span>
-                  Capacity{" "}
-                  <b style={{ color: capacityExceeded ? C.wine : C.ink }}>
-                    {activeGuests.length}/{maxCapacity}
-                  </b>
-                </span>
-              )}
+              <span className="flex items-center gap-0.5">
+                Capacity <b style={{ color: capacityExceeded ? C.wine : C.ink }}>{activeGuests.length}</b>/
+                <input
+                  type="number"
+                  min={0}
+                  value={maxCapacity}
+                  onChange={(e) => setMaxCapacity(e.target.value === "" ? "" : Number(e.target.value))}
+                  disabled={readOnly}
+                  placeholder="–"
+                  aria-label="Max capacity"
+                  className="bg-transparent outline-none font-bold text-center"
+                  style={{ color: capacityExceeded ? C.wine : C.ink, width: 26 }}
+                />
+              </span>
             </div>
 
             {(readOnly || saveStatus !== "idle") && (
