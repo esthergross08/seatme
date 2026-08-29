@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Wand2, LayoutGrid, Users, Sparkles } from "lucide-react";
+import { Wand2, LayoutGrid, Users, Sparkles, MessageCircle, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 
 const C = {
@@ -20,14 +20,24 @@ const FEATURES = [
     body: "Set your rules — who must sit together, who can't — and let SeatMe find a plan that works, in seconds.",
   },
   {
+    icon: MessageCircle,
+    title: "Talk it through",
+    body: "Ask the built-in assistant to move a guest, seat a family together, or clear a table — just say what you want changed.",
+  },
+  {
     icon: LayoutGrid,
     title: "A real floor plan",
-    body: "Drag tables into place, pick round, oval, square, or rectangle, and see exactly how the room will look.",
+    body: "Drag tables into place, pick round, oval, square, or rectangle, and see seats laid out along the table's actual shape — head and foot included.",
   },
   {
     icon: Users,
-    title: "Guests & RSVPs, organized",
-    body: "Import your list from a spreadsheet, tag groups, and see at a glance who's seated and who isn't.",
+    title: "Guests at any scale",
+    body: "Import your list from a spreadsheet, tag groups, track RSVPs and meal choices, and find anyone fast — even in a list of 600+.",
+  },
+  {
+    icon: Upload,
+    title: "Upload your venue's floor plan",
+    body: "Add a PDF or photo of the room and get a suggested table setup — shapes, counts, and seats each — pulled straight from the plan.",
   },
   {
     icon: Sparkles,
@@ -67,7 +77,8 @@ export default async function HomePage() {
           </h1>
           <p className="text-base sm:text-lg max-w-xl mx-auto mb-9" style={{ color: "#EDE7D8" }}>
             A seating planner for any event — weddings, dinners, galas, reunions. Set your guest list and a few
-            rules, and get a seating chart you can trust, with a floor plan you can actually see.
+            rules, and get a seating chart you can trust, on a floor plan you can actually see — with an
+            assistant that makes changes as easily as you'd ask a friend.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4 mb-8">
             <Link
@@ -106,7 +117,7 @@ export default async function HomePage() {
       </section>
 
       <section className="max-w-5xl mx-auto px-6 pb-20">
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {FEATURES.map((f) => {
             const Icon = f.icon;
             return (
