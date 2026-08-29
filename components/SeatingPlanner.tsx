@@ -23,6 +23,8 @@ import {
   Undo2,
   Search,
   Share2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -837,6 +839,9 @@ export default function SeatingPlanner({
   const [justGenerated, setJustGenerated] = useState(false);
   const [seatingView, setSeatingView] = useState("map");
   const [highlightNotes, setHighlightNotes] = useState(false);
+  // Map view seat style: full name-tag boxes (default, matches every other view) vs.
+  // compact colored dots (denser — easier to see a big table's whole shape at a glance).
+  const [showGuestNames, setShowGuestNames] = useState(true);
   const [picked, setPicked] = useState<string | null>(null);
   const [hoveredGuest, setHoveredGuest] = useState<string | null>(null);
   const [newGuestName, setNewGuestName] = useState("");
@@ -2987,6 +2992,17 @@ export default function SeatingPlanner({
                 >
                   <X size={14} /> Clear tables
                 </button>
+                {seatingView === "map" && (
+                  <button
+                    onClick={() => setShowGuestNames((v) => !v)}
+                    title={showGuestNames ? "Switch to compact colored dots instead of name tags" : "Switch back to full name tags"}
+                    className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border"
+                    style={{ borderColor: C.line, color: C.ink }}
+                  >
+                    {showGuestNames ? <EyeOff size={14} /> : <Eye size={14} />}
+                    {showGuestNames ? "Hide names" : "Show names"}
+                  </button>
+                )}
                 {notedGuestCount > 0 && (
                   <button
                     onClick={() => setHighlightNotes((v) => !v)}
@@ -3242,14 +3258,16 @@ export default function SeatingPlanner({
                   <span className="inline-block rounded" style={{ width: 14, height: 10, border: `1.5px solid ${C.wine}`, backgroundColor: "#fff" }} />
                   Rule conflict
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block rounded-full" style={{ width: 7, height: 7, backgroundColor: "#000" }} />
-                  Has a note
-                </span>
+                {showGuestNames && (
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block rounded-full" style={{ width: 7, height: 7, backgroundColor: "#000" }} />
+                    Has a note
+                  </span>
+                )}
                 {groups.length > 0 && (
                   <span className="flex items-center gap-1.5">
                     <span className="inline-block rounded-full" style={{ width: 7, height: 7, backgroundColor: C.muted }} />
-                    Group color
+                    {showGuestNames ? "Group color" : "Group color (dot fill)"}
                   </span>
                 )}
               </div>
@@ -3490,15 +3508,17 @@ export default function SeatingPlanner({
                               : seatRoles && seatRoles.footIdx !== null && i === seatRoles.footIdx
                               ? "Foot"
                               : null;
+                          const boxW = showGuestNames ? 68 : 16;
+                          const boxH = showGuestNames ? 30 : 16;
                           return (
-                            <div key={seatId} className="absolute" style={{ left: x - 34, top: y - 15 }}>
+                            <div key={seatId} className="absolute" style={{ left: x - boxW / 2, top: y - boxH / 2 }}>
                             {seatRoleLabel && (
                               <span
                                 className="absolute text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap"
                                 style={{
                                   color: C.gold,
-                                  left: 34,
-                                  ...(seatRoleLabel === "Head" ? { top: -13 } : { top: 33 }),
+                                  left: boxW / 2,
+                                  ...(seatRoleLabel === "Head" ? { top: -13 } : { top: boxH + 3 }),
                                   transform: "translateX(-50%)",
                                 }}
                               >
@@ -3522,21 +3542,35 @@ export default function SeatingPlanner({
                               onMouseLeave={() => setHoveredGuest(null)}
                               draggable={!!guestId && !readOnly}
                               onDragStart={(e) => guestId && handleDragStart(e, guestId)}
-                              className="absolute flex items-center justify-center text-center cursor-pointer transition-transform hover:scale-105"
-                              style={{
-                                left: 0,
-                                top: 0,
-                                width: 68,
-                                height: 30,
-                                borderRadius: 4,
-                                border: `${emphasizeNote ? 2.5 : 1.5}px solid ${hasViolation ? C.wine : guestId ? C.gold : C.line}`,
-                                backgroundColor: picked === guestId ? C.gold : emphasizeNote ? C.goldSoft : guestId ? "#fff" : "transparent",
-                                borderStyle: guestId ? "solid" : "dashed",
-                                boxShadow: emphasizeNote ? `0 0 0 2px ${C.goldSoft}` : "none",
-                              }}
+                              className="absolute flex items-center justify-center text-center cursor-pointer transition-transform hover:scale-110"
+                              style={
+                                showGuestNames
+                                  ? {
+                                      left: 0,
+                                      top: 0,
+                                      width: boxW,
+                                      height: boxH,
+                                      borderRadius: 4,
+                                      border: `${emphasizeNote ? 2.5 : 1.5}px solid ${hasViolation ? C.wine : guestId ? C.gold : C.line}`,
+                                      backgroundColor: picked === guestId ? C.gold : emphasizeNote ? C.goldSoft : guestId ? "#fff" : "transparent",
+                                      borderStyle: guestId ? "solid" : "dashed",
+                                      boxShadow: emphasizeNote ? `0 0 0 2px ${C.goldSoft}` : "none",
+                                    }
+                                  : {
+                                      left: 0,
+                                      top: 0,
+                                      width: boxW,
+                                      height: boxH,
+                                      borderRadius: "50%",
+                                      border: `${emphasizeNote ? 2.5 : 1.5}px solid ${hasViolation ? C.wine : guestId ? guestGroupColor || C.gold : C.line}`,
+                                      backgroundColor: picked === guestId ? C.gold : guestId ? guestGroupColor || C.gold : "transparent",
+                                      borderStyle: guestId ? "solid" : "dashed",
+                                      boxShadow: emphasizeNote ? `0 0 0 2px ${C.goldSoft}` : "none",
+                                    }
+                              }
                               title={guestName ? (guestNote ? `${guestName} — ${guestNote}` : guestName) : "Empty seat"}
                             >
-                              {guestGroupColor && (
+                              {showGuestNames && guestGroupColor && (
                                 <span
                                   className="absolute rounded-full"
                                   style={{
@@ -3549,7 +3583,7 @@ export default function SeatingPlanner({
                                   }}
                                 />
                               )}
-                              {guestNote && (
+                              {showGuestNames && guestNote && (
                                 <span
                                   className="absolute rounded-full"
                                   style={{
@@ -3562,15 +3596,23 @@ export default function SeatingPlanner({
                                   }}
                                 />
                               )}
-                              <span
-                                className="text-[10px] px-1 truncate"
-                                style={{
-                                  fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
-                                  color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
-                                }}
-                              >
-                                {guestName || "+"}
-                              </span>
+                              {showGuestNames ? (
+                                <span
+                                  className="text-[10px] px-1 truncate"
+                                  style={{
+                                    fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
+                                    color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
+                                  }}
+                                >
+                                  {guestName || "+"}
+                                </span>
+                              ) : (
+                                !guestId && (
+                                  <span className="text-[8px] leading-none" style={{ color: C.muted }}>
+                                    +
+                                  </span>
+                                )
+                              )}
                             </div>
                             </div>
                           );
