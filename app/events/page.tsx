@@ -10,13 +10,13 @@ import EventsList from "./EventsList";
 export const dynamic = "force-dynamic";
 
 const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
+  ink: "#2B2440",
+  paper: "#F5F2FB",
   card: "#FFFFFF",
-  gold: "#A8823C",
-  goldSoft: "#E7D9B8",
-  line: "#E4DCC9",
-  muted: "#736D5F",
+  gold: "#7454C9",
+  goldSoft: "#E9E1FA",
+  line: "#E3DEF2",
+  muted: "#6B6580",
 };
 
 export default async function EventsPage() {

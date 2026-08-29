@@ -5,13 +5,13 @@ import { X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const C = {
-  ink: "#221F2B",
+  ink: "#2B2440",
   card: "#FFFFFF",
-  gold: "#A8823C",
+  gold: "#7454C9",
   wine: "#8C3B3B",
   sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
+  line: "#E3DEF2",
+  muted: "#6B6580",
 };
 
 interface Member {

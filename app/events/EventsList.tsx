@@ -7,11 +7,11 @@ import { Search, Trash2, Undo2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const C = {
-  ink: "#221F2B",
+  ink: "#2B2440",
   card: "#FFFFFF",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-  muted: "#736D5F",
+  gold: "#7454C9",
+  line: "#E3DEF2",
+  muted: "#6B6580",
 };
 
 interface EventRow {
