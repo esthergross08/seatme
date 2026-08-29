@@ -212,39 +212,45 @@ function shapeRadius(shape: TableShape) {
   }
 }
 
-// Where seat i of n sits around a table, as an offset from the table's center. Round
-// and oval tables use an elliptical ring (matching each shape's actual w/h, so an oval's
-// short axis doesn't leave seats floating far from the table edge). Square and rectangle
-// tables walk evenly spaced points around the rectangle's perimeter instead — guests at a
-// rectangular table sit along its straight sides in real life, not in a circle floating
-// around it, and a circular ring around a rectangle made it hard to tell who's actually
-// next to whom (which matters for "must sit adjacent" constraints).
-function rectPerimeterPoint(rw: number, rh: number, frac: number) {
-  const segs: [number, [number, number], [number, number]][] = [
-    [rw, [0, -rh], [rw, -rh]],
-    [2 * rh, [rw, -rh], [rw, rh]],
-    [2 * rw, [rw, rh], [-rw, rh]],
-    [2 * rh, [-rw, rh], [-rw, -rh]],
-    [rw, [-rw, -rh], [0, -rh]],
-  ];
-  const total = segs.reduce((s, [len]) => s + len, 0);
-  let target = ((frac % 1) + 1) % 1 * total;
-  for (let i = 0; i < segs.length; i++) {
-    const [len, from, to] = segs[i];
-    if (target <= len || i === segs.length - 1) {
-      const t = len === 0 ? 0 : target / len;
-      return { dx: from[0] + (to[0] - from[0]) * t, dy: from[1] + (to[1] - from[1]) * t };
-    }
-    target -= len;
-  }
-  return { dx: 0, dy: -rh };
+// Square/rectangle tables get exactly one seat at each short end — the "head" (index 0)
+// and "foot" (the other end). You assign a guest to the head the same way as any other
+// seat (click/drag), it's just always index 0 so it's a stable, labelable position. The
+// rest of the capacity splits evenly between the two long sides. Side seats use a
+// (k)/(count+1) spacing so they're evenly spread but never land exactly on a corner.
+function rectSeatRoles(n: number): { headIdx: number; footIdx: number | null } {
+  if (n <= 0) return { headIdx: -1, footIdx: null };
+  if (n === 1) return { headIdx: 0, footIdx: null };
+  const sideCount = n - 2;
+  const topCount = Math.ceil(sideCount / 2);
+  return { headIdx: 0, footIdx: 1 + topCount };
 }
 
+function rectSeatOffset(rw: number, rh: number, i: number, n: number) {
+  const { headIdx, footIdx } = rectSeatRoles(n);
+  if (i === headIdx) return { dx: -rw, dy: 0 };
+  if (footIdx !== null && i === footIdx) return { dx: rw, dy: 0 };
+  const sideCount = Math.max(0, n - 2);
+  const topCount = Math.ceil(sideCount / 2);
+  const bottomCount = sideCount - topCount;
+  if (i >= 1 && i < 1 + topCount) {
+    const frac = i / (topCount + 1);
+    return { dx: -rw + frac * (2 * rw), dy: -rh };
+  }
+  const k = i - (1 + topCount + 1) + 1; // 1..bottomCount, counting from just after the foot seat
+  const frac = k / (bottomCount + 1);
+  return { dx: rw - frac * (2 * rw), dy: rh };
+}
+
+// Where seat i of n sits around a table, as an offset from the table's center. Round and
+// oval tables use an elliptical ring (matching each shape's actual w/h, so an oval's short
+// axis doesn't leave seats floating far from the table edge). Square and rectangle tables
+// use the head/foot/sides layout above instead of a ring — guests at a rectangular table
+// sit along its straight sides in real life, not in a circle floating around it.
 function seatOffset(shape: TableShape, w: number, h: number, i: number, n: number, pad: number) {
   const rw = w / 2 + pad;
   const rh = h / 2 + pad;
   if (shape === "square" || shape === "rectangle") {
-    return rectPerimeterPoint(rw, rh, n > 0 ? i / n : 0);
+    return rectSeatOffset(rw, rh, i, n);
   }
   const angle = -Math.PI / 2 + (2 * Math.PI * i) / (n || 1);
   return { dx: rw * Math.cos(angle), dy: rh * Math.sin(angle) };
@@ -2922,6 +2928,7 @@ export default function SeatingPlanner({
                   {visibleTables.map((t) => {
                     const basePos = layout.positions[t.id];
                     const pos = dragTable && dragTable.id === t.id ? { ...basePos, cx: dragTable.x, cy: dragTable.y } : basePos;
+                    const seatRoles = t.shape === "square" || t.shape === "rectangle" ? rectSeatRoles(t.capacity) : null;
                     const beginTableDrag = (startClientX: number, startClientY: number) => {
                       const startX = basePos.cx;
                       const startY = basePos.cy;
@@ -3023,9 +3030,28 @@ export default function SeatingPlanner({
                           const guestGroupColor = guest?.groupIds?.map((gid) => groupById[gid]?.color).find(Boolean) ?? null;
                           const hasViolation = flatViolations.some((v) => v.status === "violated" && (v.seatA === seatId || v.seatB === seatId));
                           const emphasizeNote = highlightNotes && !!guestNote;
+                          const seatRoleLabel =
+                            seatRoles && i === seatRoles.headIdx
+                              ? "Head"
+                              : seatRoles && seatRoles.footIdx !== null && i === seatRoles.footIdx
+                              ? "Foot"
+                              : null;
                           return (
+                            <div key={seatId} className="absolute" style={{ left: x - 34, top: y - 15 }}>
+                            {seatRoleLabel && (
+                              <span
+                                className="absolute text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap"
+                                style={{
+                                  color: C.gold,
+                                  left: 34,
+                                  ...(seatRoleLabel === "Head" ? { top: -13 } : { top: 33 }),
+                                  transform: "translateX(-50%)",
+                                }}
+                              >
+                                {seatRoleLabel}
+                              </span>
+                            )}
                             <div
-                              key={seatId}
                               onClick={() => handleSeatClick(seatId)}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === " ") {
@@ -3044,8 +3070,8 @@ export default function SeatingPlanner({
                               onDragStart={(e) => guestId && handleDragStart(e, guestId)}
                               className="absolute flex items-center justify-center text-center cursor-pointer transition-transform hover:scale-105"
                               style={{
-                                left: x - 34,
-                                top: y - 15,
+                                left: 0,
+                                top: 0,
                                 width: 68,
                                 height: 30,
                                 borderRadius: 4,
@@ -3091,6 +3117,7 @@ export default function SeatingPlanner({
                               >
                                 {guestName || "+"}
                               </span>
+                            </div>
                             </div>
                           );
                         })}
