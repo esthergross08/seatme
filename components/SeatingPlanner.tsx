@@ -928,11 +928,23 @@ export default function SeatingPlanner({
   const guestById = useMemo(() => Object.fromEntries(guests.map((g) => [g.id, g])), [guests]);
   const visibleGuests = useMemo(() => {
     const q = guestSearch.trim().toLowerCase();
-    if (!q) return guests;
-    return guests.filter(
-      (g) => g.name.toLowerCase().includes(q) || (g.note ?? "").toLowerCase().includes(q) || (g.mealChoice ?? "").toLowerCase().includes(q)
-    );
+    const filtered = q
+      ? guests.filter(
+          (g) => g.name.toLowerCase().includes(q) || (g.note ?? "").toLowerCase().includes(q) || (g.mealChoice ?? "").toLowerCase().includes(q)
+        )
+      : guests;
+    return [...filtered].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }, [guests, guestSearch]);
+  // First guest id for each letter, in the sorted+filtered list — powers the A-Z jump index.
+  const guestLetterIndex = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const g of visibleGuests) {
+      const letter = (g.name.trim()[0] || "#").toUpperCase();
+      const key = /[A-Z]/.test(letter) ? letter : "#";
+      if (!(key in m)) m[key] = g.id;
+    }
+    return m;
+  }, [visibleGuests]);
   const groupById = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups]);
   const guestsByGroupId = useMemo(() => {
     const m: Record<string, string[]> = {};
@@ -2576,14 +2588,15 @@ export default function SeatingPlanner({
                 </div>
               )}
 
-              <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.line, backgroundColor: C.card }}>
+              <div className="flex items-start gap-1.5">
+              <div className="flex-1 rounded-xl border overflow-hidden" style={{ borderColor: C.line, backgroundColor: C.card }}>
                 {visibleGuests.length === 0 && (
                   <div className="px-3 py-3 text-xs" style={{ color: C.muted }}>
                     No guests match &quot;{guestSearch}&quot;.
                   </div>
                 )}
                 {visibleGuests.map((g) => (
-                  <div key={g.id} className="px-3 py-2 border-b last:border-b-0" style={{ borderColor: C.line }}>
+                  <div key={g.id} id={`guest-row-${g.id}`} className="px-3 py-2 border-b last:border-b-0 scroll-mt-24" style={{ borderColor: C.line }}>
                     <div className="flex items-center gap-2">
                       <input
                         value={g.name}
@@ -2679,6 +2692,29 @@ export default function SeatingPlanner({
                     <Plus size={15} />
                   </IconBtn>
                 </div>
+              </div>
+              {guests.length > 20 && (
+                <div className="hidden sm:flex flex-col shrink-0 sticky top-4 select-none">
+                  {"ABCDEFGHIJKLMNOPQRSTUVWXYZ#".split("").map((letter) => {
+                    const targetId = guestLetterIndex[letter];
+                    return (
+                      <button
+                        key={letter}
+                        type="button"
+                        disabled={!targetId}
+                        onClick={() =>
+                          document.getElementById(`guest-row-${targetId}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+                        }
+                        aria-label={`Jump to guests starting with ${letter}`}
+                        className="text-[9px] leading-none px-1 py-[1.5px] font-semibold disabled:opacity-25"
+                        style={{ color: targetId ? C.gold : C.muted, background: "none", border: "none", cursor: targetId ? "pointer" : "default" }}
+                      >
+                        {letter}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               </div>
             </div>
 
