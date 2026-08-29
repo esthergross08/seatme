@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, MapPin, Plus, Search, Trash2, Undo2, Upload, X } from "lucide-react";
+import { FileText, MapPin, Plus, Search, Sparkles, Trash2, Undo2, Upload, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const C = {
@@ -95,6 +95,9 @@ export default function LocationsList({
   const [floorPlanPath, setFloorPlanPath] = useState<string | null>(null);
   const [floorPlanName, setFloorPlanName] = useState<string | null>(null);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestion, setSuggestion] = useState<{ tables: TableGroupRow[]; note: string | null } | null>(null);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -131,6 +134,8 @@ export default function LocationsList({
     setRows([]);
     setFloorPlanPath(null);
     setFloorPlanName(null);
+    setSuggestion(null);
+    setSuggestError(null);
     setFormError(null);
     setModalOpen(true);
   }
@@ -142,6 +147,8 @@ export default function LocationsList({
     setRows(loc.table_groups.map((g) => ({ ...g })));
     setFloorPlanPath(loc.floor_plan_path);
     setFloorPlanName(loc.floor_plan_name);
+    setSuggestion(null);
+    setSuggestError(null);
     setFormError(null);
     setModalOpen(true);
   }
@@ -187,6 +194,53 @@ export default function LocationsList({
     }
     setFloorPlanPath(null);
     setFloorPlanName(null);
+    setSuggestion(null);
+    setSuggestError(null);
+  }
+
+  // Proposes a table setup from the uploaded floor plan via Claude vision, but doesn't
+  // touch `rows` until the user explicitly hits Apply — same propose-then-confirm shape
+  // as the AI seating assistant elsewhere in the app, since a vision read of a floor
+  // plan is an estimate, not something to silently overwrite an existing setup with.
+  async function handleSuggestFromFloorPlan() {
+    if (!floorPlanPath) return;
+    setSuggesting(true);
+    setSuggestError(null);
+    setSuggestion(null);
+    try {
+      const res = await fetch("/api/floor-plan/suggest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ context: "location", path: floorPlanPath }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setSuggestError(json.error || "Couldn't read that floor plan.");
+        return;
+      }
+      const tables: TableGroupRow[] = (json.tables || []).map((t: { shape: TableShape; count: number; capacity: number }) => ({
+        id: crypto.randomUUID(),
+        label: `${SHAPE_LABELS[t.shape]} tables`,
+        shape: t.shape,
+        count: t.count,
+        capacity: t.capacity,
+      }));
+      if (tables.length === 0) {
+        setSuggestError(json.note || "Couldn't make out any tables in that floor plan.");
+        return;
+      }
+      setSuggestion({ tables, note: json.note });
+    } catch {
+      setSuggestError("Couldn't reach the AI service. Try again in a moment.");
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  function applySuggestion() {
+    if (!suggestion) return;
+    setRows(suggestion.tables);
+    setSuggestion(null);
   }
 
   function addRow() {
@@ -611,6 +665,52 @@ export default function LocationsList({
                       className="hidden"
                     />
                   </label>
+                )}
+                {floorPlanPath && !suggestion && (
+                  <button
+                    type="button"
+                    onClick={handleSuggestFromFloorPlan}
+                    disabled={suggesting}
+                    className="mt-2 flex items-center gap-1.5 text-xs font-semibold disabled:opacity-60"
+                    style={{ color: C.gold, background: "none", border: "none", cursor: "pointer" }}
+                  >
+                    <Sparkles size={13} />
+                    {suggesting ? "Reading floor plan…" : "Suggest table setup from this floor plan"}
+                  </button>
+                )}
+                {suggestError && (
+                  <p className="text-xs mt-1.5" style={{ color: C.wine }}>
+                    {suggestError}
+                  </p>
+                )}
+                {suggestion && (
+                  <div className="mt-2 p-3 rounded-lg text-xs" style={{ backgroundColor: "#FBF3E4", color: C.ink }}>
+                    <div className="flex items-start gap-1.5 mb-1.5">
+                      <Sparkles size={13} style={{ color: C.gold, marginTop: 1 }} className="shrink-0" />
+                      <span>
+                        {suggestion.note && <span className="block mb-1">{suggestion.note}</span>}
+                        {summarizeTableGroups(suggestion.tables)} — this replaces the table setup above.
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setSuggestion(null)}
+                        className="text-xs font-medium"
+                        style={{ color: C.muted, background: "none", border: "none", cursor: "pointer" }}
+                      >
+                        Dismiss
+                      </button>
+                      <button
+                        type="button"
+                        onClick={applySuggestion}
+                        className="text-xs font-semibold px-2.5 py-1 rounded-lg"
+                        style={{ backgroundColor: C.gold, color: "#fff", border: "none", cursor: "pointer" }}
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
 

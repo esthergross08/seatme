@@ -816,6 +816,8 @@ export default function SeatingPlanner({
   const [floorPlan, setFloorPlan] = useState<FloorPlan | null>(initialData?.floorPlan ?? null);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanError, setFloorPlanError] = useState<string | null>(null);
+  const [floorPlanSuggesting, setFloorPlanSuggesting] = useState(false);
+  const [floorPlanSuggestion, setFloorPlanSuggestion] = useState<{ tables: TableGroup[]; note: string | null } | null>(null);
   const [guestSearch, setGuestSearch] = useState("");
   const [compactGuestRows, setCompactGuestRows] = useState(false);
   const [undo, setUndo] = useState<{ message: string; restore: () => void } | null>(null);
@@ -1315,16 +1317,62 @@ export default function SeatingPlanner({
       await supabase.storage.from("floor-plans").remove([floorPlan.path]);
     }
     setFloorPlan({ path, name: file.name });
+    setFloorPlanSuggestion(null);
   }
 
   async function handleFloorPlanRemove() {
     if (readOnly || !floorPlan) return;
     await createClient().storage.from("floor-plans").remove([floorPlan.path]);
     setFloorPlan(null);
+    setFloorPlanSuggestion(null);
   }
 
   function floorPlanPublicUrl(path: string) {
     return createClient().storage.from("floor-plans").getPublicUrl(path).data.publicUrl;
+  }
+
+  // Proposes a table setup from the uploaded floor plan via Claude vision, but doesn't
+  // touch tableGroups until the user explicitly hits Apply — same propose-then-confirm
+  // shape as the AI seating assistant elsewhere in this component.
+  async function handleSuggestFromFloorPlan() {
+    if (readOnly || !floorPlan) return;
+    setFloorPlanSuggesting(true);
+    setFloorPlanError(null);
+    setFloorPlanSuggestion(null);
+    try {
+      const res = await fetch("/api/floor-plan/suggest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ context: "event", eventId, path: floorPlan.path }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setFloorPlanError(json.error || "Couldn't read that floor plan.");
+        return;
+      }
+      const tables: TableGroup[] = (json.tables || []).map((t: { shape: TableShape; count: number; capacity: number }) => ({
+        id: genId(),
+        label: `${t.shape[0].toUpperCase()}${t.shape.slice(1)} tables`,
+        shape: t.shape,
+        count: t.count,
+        capacity: t.capacity,
+      }));
+      if (tables.length === 0) {
+        setFloorPlanError(json.note || "Couldn't make out any tables in that floor plan.");
+        return;
+      }
+      setFloorPlanSuggestion({ tables, note: json.note });
+    } catch {
+      setFloorPlanError("Couldn't reach the AI service. Try again in a moment.");
+    } finally {
+      setFloorPlanSuggesting(false);
+    }
+  }
+
+  function applyFloorPlanSuggestion() {
+    if (!floorPlanSuggestion) return;
+    setTableGroups(floorPlanSuggestion.tables);
+    setFloorPlanSuggestion(null);
   }
 
   function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -2317,10 +2365,51 @@ export default function SeatingPlanner({
                   </label>
                 )
               )}
+              {floorPlan && !readOnly && !floorPlanSuggestion && (
+                <button
+                  onClick={handleSuggestFromFloorPlan}
+                  disabled={floorPlanSuggesting}
+                  className="mt-2 flex items-center gap-1.5 text-xs font-semibold disabled:opacity-60"
+                  style={{ color: C.gold, background: "none", border: "none", cursor: "pointer" }}
+                >
+                  <Sparkles size={13} />
+                  {floorPlanSuggesting ? "Reading floor plan…" : "Suggest table setup from this floor plan"}
+                </button>
+              )}
               {floorPlanError && (
                 <p className="text-xs mt-1.5" style={{ color: C.wine }}>
                   {floorPlanError}
                 </p>
+              )}
+              {floorPlanSuggestion && (
+                <div className="mt-2 p-3 rounded-xl text-sm" style={{ backgroundColor: "#FBF3E4", color: C.ink }}>
+                  <div className="flex items-start gap-1.5 mb-2">
+                    <Sparkles size={14} style={{ color: C.gold, marginTop: 2 }} className="shrink-0" />
+                    <span>
+                      {floorPlanSuggestion.note && <span className="block mb-1">{floorPlanSuggestion.note}</span>}
+                      {floorPlanSuggestion.tables
+                        .map((t) => `${t.count}× ${(t.shape || "round")[0].toUpperCase()}${(t.shape || "round").slice(1)} (${t.capacity} seats)`)
+                        .join(" · ")}{" "}
+                      — this replaces your current table types.
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 justify-end">
+                    <button
+                      onClick={() => setFloorPlanSuggestion(null)}
+                      className="text-xs font-medium"
+                      style={{ color: C.muted, background: "none", border: "none", cursor: "pointer" }}
+                    >
+                      Dismiss
+                    </button>
+                    <button
+                      onClick={applyFloorPlanSuggestion}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+                      style={{ backgroundColor: C.gold, color: "#fff", border: "none", cursor: "pointer" }}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
