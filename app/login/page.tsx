@@ -11,7 +11,7 @@ const C = {
   wine: "#8C3B3B",
   sage: "#54704F",
   line: "#E4DCC9",
-  muted: "#8A8272",
+  muted: "#736D5F",
 };
 
 export default function LoginPage() {
@@ -58,6 +58,8 @@ function LoginForm() {
         justifyContent: "center",
         backgroundColor: C.paper,
         fontFamily: "Inter, sans-serif",
+        padding: "24px 16px",
+        boxSizing: "border-box",
       }}
     >
       <div

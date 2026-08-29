@@ -19,6 +19,8 @@ import {
   StickyNote,
   Link2,
   Shuffle,
+  Undo2,
+  Search,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -38,7 +40,7 @@ const C = {
   wine: "#8C3B3B",
   sage: "#54704F",
   line: "#E4DCC9",
-  muted: "#8A8272",
+  muted: "#736D5F",
 };
 
 const FONTS = `
@@ -628,6 +630,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
+      aria-label={title}
       disabled={disabled}
       className="p-1.5 rounded-md transition-colors"
       style={{ color: danger ? C.wine : C.muted, opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer" }}
@@ -682,6 +685,11 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const [tablePositions, setTablePositions] = useState<Record<string, { x: number; y: number }>>(
     initialData?.tablePositions ?? {}
   );
+  const [guestSearch, setGuestSearch] = useState("");
+  const [compactGuestRows, setCompactGuestRows] = useState(false);
+  const [undo, setUndo] = useState<{ message: string; restore: () => void } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exportMenuRef = useRef<HTMLDetailsElement>(null);
   const [dragTable, setDragTable] = useState<{ id: string; x: number; y: number } | null>(null);
   const [pendingImport, setPendingImport] = useState<{
     guests: { name: string; groupNames: string[]; email?: string; rsvpStatus?: RsvpStatus; mealChoice?: string }[];
@@ -751,6 +759,13 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const layout = useMemo(() => computeLayout(visibleTables, tablePositions), [visibleTables, tablePositions]);
 
   const guestById = useMemo(() => Object.fromEntries(guests.map((g) => [g.id, g])), [guests]);
+  const visibleGuests = useMemo(() => {
+    const q = guestSearch.trim().toLowerCase();
+    if (!q) return guests;
+    return guests.filter(
+      (g) => g.name.toLowerCase().includes(q) || (g.note ?? "").toLowerCase().includes(q) || (g.mealChoice ?? "").toLowerCase().includes(q)
+    );
+  }, [guests, guestSearch]);
   const groupById = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups]);
   const guestsByGroupId = useMemo(() => {
     const m: Record<string, string[]> = {};
@@ -931,6 +946,19 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     };
   }
 
+  // ---- undo (destructive actions stay instant — no confirm — but offer a brief undo) ----
+  function pushUndo(message: string, restore: () => void) {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndo({ message, restore });
+    undoTimerRef.current = setTimeout(() => setUndo(null), 8000);
+  }
+  function performUndo() {
+    if (!undo) return;
+    undo.restore();
+    setUndo(null);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+  }
+
   // ---- table group handlers ----
   const addTableGroup = () => {
     if (readOnly) return;
@@ -942,7 +970,36 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   };
   const removeTableGroup = (id: string) => {
     if (readOnly) return;
+    const removedIds = new Set(buildTables(tableGroups.filter((g) => g.id === id), tableNameOverrides).map((t) => t.id));
     setTableGroups((tg) => tg.filter((g) => g.id !== id));
+    if (removedIds.size > 0) {
+      setTableNameOverrides((m) => {
+        const next = { ...m };
+        removedIds.forEach((tid) => delete next[tid]);
+        return next;
+      });
+      setTablePositions((m) => {
+        const next = { ...m };
+        removedIds.forEach((tid) => delete next[tid]);
+        return next;
+      });
+    }
+  };
+  const removeTableGroupWithUndo = (id: string) => {
+    if (readOnly) return;
+    const tg = tableGroups.find((g) => g.id === id);
+    if (!tg) return;
+    const prevTableGroups = tableGroups;
+    const prevSeatAssignment = seatAssignment;
+    const prevTableNameOverrides = tableNameOverrides;
+    const prevTablePositions = tablePositions;
+    removeTableGroup(id);
+    pushUndo(`Removed table type "${tg.label}".`, () => {
+      setTableGroups(prevTableGroups);
+      setSeatAssignment(prevSeatAssignment);
+      setTableNameOverrides(prevTableNameOverrides);
+      setTablePositions(prevTablePositions);
+    });
   };
   const renameTable = (tableId: string, name: string) => {
     if (readOnly) return;
@@ -999,6 +1056,20 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const removeGuest = (id: string) => {
     if (readOnly) return;
     setGuests((g) => g.filter((x) => x.id !== id));
+  };
+  const removeGuestWithUndo = (id: string) => {
+    if (readOnly) return;
+    const guest = guests.find((g) => g.id === id);
+    if (!guest) return;
+    const prevGuests = guests;
+    const prevConstraints = constraints;
+    const prevSeatAssignment = seatAssignment;
+    removeGuest(id);
+    pushUndo(`Removed ${guest.name}.`, () => {
+      setGuests(prevGuests);
+      setConstraints(prevConstraints);
+      setSeatAssignment(prevSeatAssignment);
+    });
   };
   const toggleGuestGroup = (guestId: string, groupId: string) => {
     if (readOnly) return;
@@ -1196,6 +1267,20 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     setGuests((gs) => gs.map((g) => ({ ...g, groupIds: g.groupIds.filter((gid) => gid !== id) })));
     setConstraints((cs) => cs.filter((c) => !((c.aType === "group" && c.aId === id) || (c.bType === "group" && c.bId === id))));
   };
+  const removeGroupWithUndo = (id: string) => {
+    if (readOnly) return;
+    const group = groups.find((g) => g.id === id);
+    if (!group) return;
+    const prevGroups = groups;
+    const prevGuests = guests;
+    const prevConstraints = constraints;
+    removeGroup(id);
+    pushUndo(`Removed group "${group.name}".`, () => {
+      setGroups(prevGroups);
+      setGuests(prevGuests);
+      setConstraints(prevConstraints);
+    });
+  };
   const toggleGroupSeatingMode = (id: string) => {
     if (readOnly) return;
     setGroups((gs) =>
@@ -1219,6 +1304,12 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
   const removeConstraint = (id: string) => {
     if (readOnly) return;
     setConstraints((c) => c.filter((x) => x.id !== id));
+  };
+  const removeConstraintWithUndo = (id: string) => {
+    if (readOnly) return;
+    const prevConstraints = constraints;
+    removeConstraint(id);
+    pushUndo("Removed rule.", () => setConstraints(prevConstraints));
   };
 
   // ---- seating handlers ----
@@ -1286,6 +1377,18 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
     setActiveTableIds(null);
     setJustGenerated(false);
     setPicked(null);
+  }
+  function clearAllSeatsWithUndo() {
+    if (readOnly || seatedCount === 0) return;
+    const prevSeatAssignment = seatAssignment;
+    const prevActiveTableIds = activeTableIds;
+    const prevJustGenerated = justGenerated;
+    clearAllSeats();
+    pushUndo("Cleared all seats.", () => {
+      setSeatAssignment(prevSeatAssignment);
+      setActiveTableIds(prevActiveTableIds);
+      setJustGenerated(prevJustGenerated);
+    });
   }
 
   function runSolver() {
@@ -1512,7 +1615,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
           case "seat_guest": {
             const g = findGuest(op.guestName);
             if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
-            const table = byName(buildTables(workingTableGroups), (t) => t.label, op.tableLabel || "");
+            const table = byName(buildTables(workingTableGroups, tableNameOverrides), (t) => t.label, op.tableLabel || "");
             if (!table) throw new Error(`Couldn't find table "${op.tableLabel}".`);
             const occupied = new Set(Object.keys(workingSeatAssignment));
             const freeSeat = buildSeats([table]).find((s) => !occupied.has(s.id));
@@ -1735,14 +1838,21 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
       {/* mobile tab bar */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 flex justify-around p-2 border-t z-20" style={{ backgroundColor: C.card, borderColor: C.line }}>
         {[
-          { id: "setup", icon: Table2 },
-          { id: "guests", icon: Users },
-          { id: "seating", icon: LayoutGrid },
-          { id: "decor", icon: Palette },
+          { id: "setup", icon: Table2, label: "Tables" },
+          { id: "guests", icon: Users, label: "Guests & rules" },
+          { id: "seating", icon: LayoutGrid, label: "Seating map" },
+          { id: "decor", icon: Palette, label: "Decor ideas" },
         ].map((t) => {
           const Icon = t.icon;
           return (
-            <button key={t.id} onClick={() => setTab(t.id)} className="p-2 rounded-lg" style={{ color: tab === t.id ? C.gold : C.muted }}>
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              aria-label={t.label}
+              aria-current={tab === t.id ? "page" : undefined}
+              className="p-2 rounded-lg"
+              style={{ color: tab === t.id ? C.gold : C.muted }}
+            >
               <Icon size={20} />
             </button>
           );
@@ -1750,7 +1860,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
       </div>
 
       {/* main */}
-      <main className="flex-1 p-6 sm:p-10 pb-24 sm:pb-10 overflow-auto">
+      <main className="flex-1 p-6 sm:p-10 pb-36 sm:pb-10 overflow-auto">
         {/* mobile-only event name — the sidebar with the rename field is hidden below the sm breakpoint */}
         <div className="sm:hidden mb-6">
           <input
@@ -1774,17 +1884,17 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
 
             <div className="space-y-3">
               {tableGroups.map((g) => (
-                <div key={g.id} className="flex items-center gap-3 p-3 rounded-xl border" style={{ backgroundColor: C.card, borderColor: C.line }}>
+                <div key={g.id} className="flex flex-wrap items-center gap-3 p-3 rounded-xl border" style={{ backgroundColor: C.card, borderColor: C.line }}>
                   <input
                     value={g.label}
                     onChange={(e) => updateTableGroup(g.id, { label: e.target.value })}
                     disabled={readOnly}
-                    className="flex-1 bg-transparent outline-none text-sm font-medium"
+                    className="w-full sm:w-auto sm:flex-1 bg-transparent outline-none text-sm font-medium"
                     style={{ color: C.ink }}
                     placeholder="Table type name"
                   />
-                  <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }}>
-                    Tables
+                  <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }} title="Number of tables of this type">
+                    <Table2 size={13} style={{ color: C.gold }} />
                     <input
                       type="number"
                       min={0}
@@ -1794,12 +1904,14 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       onBlur={() => {
                         if (g.count === "") updateTableGroup(g.id, { count: 0 });
                       }}
+                      aria-label="Number of tables of this type"
                       className="w-14 px-2 py-1 rounded-md border text-sm text-center"
                       style={{ borderColor: C.line }}
                     />
+                    tables
                   </label>
-                  <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }}>
-                    Seats each
+                  <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }} title="Seats per table">
+                    <Users size={13} style={{ color: C.gold }} />
                     <input
                       type="number"
                       min={0}
@@ -1809,9 +1921,11 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       onBlur={() => {
                         if (g.capacity === "") updateTableGroup(g.id, { capacity: 0 });
                       }}
+                      aria-label="Seats per table"
                       className="w-14 px-2 py-1 rounded-md border text-sm text-center"
                       style={{ borderColor: C.line }}
                     />
+                    seats each
                   </label>
                   <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }}>
                     Shape
@@ -1819,6 +1933,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       value={g.shape || "round"}
                       disabled={readOnly}
                       onChange={(e) => updateTableGroup(g.id, { shape: e.target.value as TableShape })}
+                      aria-label="Table shape"
                       className="px-2 py-1 rounded-md border text-sm"
                       style={{ borderColor: C.line, color: C.ink }}
                     >
@@ -1828,7 +1943,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       <option value="rectangle">Rectangle</option>
                     </select>
                   </label>
-                  <IconBtn danger title="Remove table type" onClick={() => removeTableGroup(g.id)} disabled={readOnly}>
+                  <IconBtn danger title="Remove table type" onClick={() => removeTableGroupWithUndo(g.id)} disabled={readOnly}>
                     <Trash2 size={15} />
                   </IconBtn>
                 </div>
@@ -1959,6 +2074,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                         value={gr.name}
                         onChange={(e) => renameGroup(gr.id, e.target.value)}
                         disabled={readOnly}
+                        aria-label="Group name"
                         className="bg-transparent outline-none"
                         style={{ color: "#fff", width: `${Math.max(60, gr.name.length * 6.5)}px` }}
                       />
@@ -1970,12 +2086,18 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                             ? "Mixed — deliberately spread across tables. Click to seat together instead."
                             : "Seated together by default. Click to mix this group across tables instead."
                         }
+                        aria-label={mixed ? `${gr.name}: mixed seating, click to seat together` : `${gr.name}: seated together, click to mix`}
                         className="p-0.5 rounded-full hover:bg-black/10 disabled:opacity-60"
                       >
                         {mixed ? <Shuffle size={10} /> : <Link2 size={10} />}
                       </button>
                       {!readOnly && (
-                        <button onClick={() => removeGroup(gr.id)} className="p-0.5 rounded-full hover:bg-black/10">
+                        <button
+                          onClick={() => removeGroupWithUndo(gr.id)}
+                          title="Remove group"
+                          aria-label={`Remove group ${gr.name}`}
+                          className="p-0.5 rounded-full hover:bg-black/10"
+                        >
                           <X size={10} />
                         </button>
                       )}
@@ -1990,14 +2112,40 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                 <Link2 size={10} className="inline mr-1 -mt-0.5" /> together (default) · <Shuffle size={10} className="inline mr-1 -mt-0.5" /> mixed — click a group's icon to switch. Applied automatically on generate/regenerate.
               </div>
 
+              {guests.length > 5 && (
+                <div className="mb-2 flex items-center gap-3">
+                  <div className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border" style={{ borderColor: C.line, backgroundColor: C.card }}>
+                    <Search size={13} style={{ color: C.muted }} />
+                    <input
+                      value={guestSearch}
+                      onChange={(e) => setGuestSearch(e.target.value)}
+                      placeholder="Search guests…"
+                      aria-label="Search guests"
+                      className="flex-1 bg-transparent outline-none text-xs"
+                      style={{ color: C.ink }}
+                    />
+                  </div>
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer shrink-0" style={{ color: C.muted }}>
+                    <input type="checkbox" checked={compactGuestRows} onChange={(e) => setCompactGuestRows(e.target.checked)} />
+                    Compact view
+                  </label>
+                </div>
+              )}
+
               <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.line, backgroundColor: C.card }}>
-                {guests.map((g) => (
+                {visibleGuests.length === 0 && (
+                  <div className="px-3 py-3 text-xs" style={{ color: C.muted }}>
+                    No guests match &quot;{guestSearch}&quot;.
+                  </div>
+                )}
+                {visibleGuests.map((g) => (
                   <div key={g.id} className="px-3 py-2 border-b last:border-b-0" style={{ borderColor: C.line }}>
                     <div className="flex items-center gap-2">
                       <input
                         value={g.name}
                         onChange={(e) => renameGuest(g.id, e.target.value)}
                         disabled={readOnly}
+                        aria-label="Guest name"
                         className="flex-1 bg-transparent outline-none text-sm"
                         style={{ color: C.ink, fontFamily: "Fraunces, serif" }}
                       />
@@ -2006,7 +2154,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                           ? `Seated · ${tableById[seatsById[seatOfGuest[g.id]]?.tableId ?? ""]?.label ?? ""}`
                           : "Unseated"}
                       </span>
-                      <IconBtn danger title="Remove guest" onClick={() => removeGuest(g.id)} disabled={readOnly}>
+                      <IconBtn danger title="Remove guest" onClick={() => removeGuestWithUndo(g.id)} disabled={readOnly}>
                         <X size={14} />
                       </IconBtn>
                     </div>
@@ -2032,41 +2180,45 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                         })}
                       </div>
                     )}
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <StickyNote size={11} className="shrink-0" style={{ color: g.note ? C.gold : C.muted }} />
-                      <input
-                        value={g.note ?? ""}
-                        onChange={(e) => updateGuestNote(g.id, e.target.value)}
-                        disabled={readOnly}
-                        placeholder="Dietary need, high chair, wheelchair access…"
-                        className="flex-1 bg-transparent outline-none text-[11px]"
-                        style={{ color: C.muted }}
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <button
-                        onClick={() => cycleRsvpStatus(g.id)}
-                        disabled={readOnly}
-                        title="Click to change RSVP status"
-                        className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium shrink-0 disabled:opacity-60"
-                        style={{
-                          borderColor:
-                            g.rsvpStatus === "declined" ? C.wine : g.rsvpStatus === "attending" ? C.sage : C.line,
-                          color:
-                            g.rsvpStatus === "declined" ? C.wine : g.rsvpStatus === "attending" ? C.sage : C.muted,
-                        }}
-                      >
-                        {g.rsvpStatus === "declined" ? "Declined" : g.rsvpStatus === "attending" ? "Attending" : "Pending"}
-                      </button>
-                      <input
-                        value={g.mealChoice ?? ""}
-                        onChange={(e) => updateGuestMealChoice(g.id, e.target.value)}
-                        disabled={readOnly}
-                        placeholder="Meal choice…"
-                        className="flex-1 bg-transparent outline-none text-[11px]"
-                        style={{ color: C.muted }}
-                      />
-                    </div>
+                    {!compactGuestRows && (
+                      <>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <StickyNote size={11} className="shrink-0" style={{ color: g.note ? C.gold : C.muted }} />
+                          <input
+                            value={g.note ?? ""}
+                            onChange={(e) => updateGuestNote(g.id, e.target.value)}
+                            disabled={readOnly}
+                            placeholder="Dietary need, high chair, wheelchair access…"
+                            className="flex-1 bg-transparent outline-none text-[11px]"
+                            style={{ color: C.muted }}
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <button
+                            onClick={() => cycleRsvpStatus(g.id)}
+                            disabled={readOnly}
+                            title="Click to change RSVP status"
+                            className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium shrink-0 disabled:opacity-60"
+                            style={{
+                              borderColor:
+                                g.rsvpStatus === "declined" ? C.wine : g.rsvpStatus === "attending" ? C.sage : C.line,
+                              color:
+                                g.rsvpStatus === "declined" ? C.wine : g.rsvpStatus === "attending" ? C.sage : C.muted,
+                            }}
+                          >
+                            {g.rsvpStatus === "declined" ? "Declined" : g.rsvpStatus === "attending" ? "Attending" : "Pending"}
+                          </button>
+                          <input
+                            value={g.mealChoice ?? ""}
+                            onChange={(e) => updateGuestMealChoice(g.id, e.target.value)}
+                            disabled={readOnly}
+                            placeholder="Meal choice…"
+                            className="flex-1 bg-transparent outline-none text-[11px]"
+                            style={{ color: C.muted }}
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
                 <div className="flex items-center gap-2 px-3 py-2">
@@ -2121,7 +2273,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                             </option>
                           ))}
                         </select>
-                        <IconBtn danger title="Remove rule" onClick={() => removeConstraint(c.id)} disabled={readOnly}>
+                        <IconBtn danger title="Remove rule" onClick={() => removeConstraintWithUndo(c.id)} disabled={readOnly}>
                           <X size={14} />
                         </IconBtn>
                       </div>
@@ -2215,7 +2367,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                   {solving ? "Generating…" : "Auto-generate seating"}
                 </button>
                 <button
-                  onClick={clearAllSeats}
+                  onClick={clearAllSeatsWithUndo}
                   disabled={readOnly || seatedCount === 0}
                   title="Unseat everyone and start the floor plan from scratch — keeps your guest list, groups, tables, and constraints"
                   className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
@@ -2237,24 +2389,43 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                     <StickyNote size={14} /> Notes ({notedGuestCount})
                   </button>
                 )}
-                <button
-                  onClick={exportExcel}
-                  disabled={tables.length === 0}
-                  title="Download the seating list as an Excel file"
-                  className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
-                  style={{ borderColor: C.line, color: C.ink }}
-                >
-                  <Download size={14} /> Excel
-                </button>
-                <button
-                  onClick={exportPdf}
-                  disabled={tables.length === 0 || exportingPdf || seatingView !== "map"}
-                  title={seatingView !== "map" ? "Switch to Map view to export a PDF" : "Download the seat map as a PDF"}
-                  className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
-                  style={{ borderColor: C.line, color: C.ink }}
-                >
-                  <FileImage size={14} /> {exportingPdf ? "Exporting…" : "PDF"}
-                </button>
+                <details ref={exportMenuRef} className="relative">
+                  <summary
+                    className="list-none flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border cursor-pointer"
+                    style={{ borderColor: C.line, color: C.ink }}
+                  >
+                    <Download size={14} /> Export
+                  </summary>
+                  <div
+                    className="absolute right-0 mt-1 rounded-lg border shadow-lg overflow-hidden z-10"
+                    style={{ borderColor: C.line, backgroundColor: C.card, minWidth: 180 }}
+                  >
+                    <button
+                      onClick={() => {
+                        exportExcel();
+                        exportMenuRef.current?.removeAttribute("open");
+                      }}
+                      disabled={tables.length === 0}
+                      title="Download the seating list as an Excel file"
+                      className="flex items-center gap-1.5 w-full text-left px-3 py-2 text-sm disabled:opacity-40"
+                      style={{ color: C.ink }}
+                    >
+                      <Download size={14} /> Excel (.xlsx)
+                    </button>
+                    <button
+                      onClick={() => {
+                        exportPdf();
+                        exportMenuRef.current?.removeAttribute("open");
+                      }}
+                      disabled={tables.length === 0 || exportingPdf || seatingView !== "map"}
+                      title={seatingView !== "map" ? "Switch to Map view to export a PDF" : "Download the seat map as a PDF"}
+                      className="flex items-center gap-1.5 w-full text-left px-3 py-2 text-sm border-t disabled:opacity-40"
+                      style={{ color: C.ink, borderColor: C.line }}
+                    >
+                      <FileImage size={14} /> {exportingPdf ? "Exporting…" : "PDF (seat map)"}
+                    </button>
+                  </div>
+                </details>
               </div>
             </div>
 
@@ -2417,6 +2588,15 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                       draggable={!readOnly}
                       onDragStart={(e) => handleDragStart(e, g.id)}
                       onClick={() => handlePoolClick(g.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handlePoolClick(g.id);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={readOnly ? -1 : 0}
+                      aria-pressed={picked === g.id}
                       title={g.note || undefined}
                       className="px-3 py-1.5 rounded-lg text-sm cursor-pointer border select-none flex items-center gap-1.5"
                       style={{
@@ -2493,34 +2673,62 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                   {visibleTables.map((t) => {
                     const basePos = layout.positions[t.id];
                     const pos = dragTable && dragTable.id === t.id ? { ...basePos, cx: dragTable.x, cy: dragTable.y } : basePos;
-                    const startTableDrag = (e: React.MouseEvent) => {
-                      if (readOnly) return;
-                      e.preventDefault();
-                      const startClientX = e.clientX;
-                      const startClientY = e.clientY;
+                    const beginTableDrag = (startClientX: number, startClientY: number) => {
                       const startX = basePos.cx;
                       const startY = basePos.cy;
                       const minCoord = basePos.seatR + 10;
-                      const onMove = (ev: MouseEvent) => {
-                        const nx = Math.max(minCoord, startX + (ev.clientX - startClientX));
-                        const ny = Math.max(minCoord, startY + (ev.clientY - startClientY));
-                        setDragTable({ id: t.id, x: nx, y: ny });
+                      const compute = (clientX: number, clientY: number) => ({
+                        x: Math.max(minCoord, startX + (clientX - startClientX)),
+                        y: Math.max(minCoord, startY + (clientY - startClientY)),
+                      });
+                      const onMouseMove = (ev: MouseEvent) => setDragTable({ id: t.id, ...compute(ev.clientX, ev.clientY) });
+                      const onMouseUp = (ev: MouseEvent) => {
+                        const p = compute(ev.clientX, ev.clientY);
+                        moveTable(t.id, p.x, p.y);
+                        cleanup();
                       };
-                      const onUp = (ev: MouseEvent) => {
-                        const nx = Math.max(minCoord, startX + (ev.clientX - startClientX));
-                        const ny = Math.max(minCoord, startY + (ev.clientY - startClientY));
-                        moveTable(t.id, nx, ny);
+                      const onTouchMove = (ev: TouchEvent) => {
+                        const touch = ev.touches[0];
+                        if (!touch) return;
+                        ev.preventDefault();
+                        setDragTable({ id: t.id, ...compute(touch.clientX, touch.clientY) });
+                      };
+                      const onTouchEnd = (ev: TouchEvent) => {
+                        const touch = ev.changedTouches[0];
+                        if (touch) {
+                          const p = compute(touch.clientX, touch.clientY);
+                          moveTable(t.id, p.x, p.y);
+                        }
+                        cleanup();
+                      };
+                      function cleanup() {
                         setDragTable(null);
-                        window.removeEventListener("mousemove", onMove);
-                        window.removeEventListener("mouseup", onUp);
-                      };
-                      window.addEventListener("mousemove", onMove);
-                      window.addEventListener("mouseup", onUp);
+                        window.removeEventListener("mousemove", onMouseMove);
+                        window.removeEventListener("mouseup", onMouseUp);
+                        window.removeEventListener("touchmove", onTouchMove);
+                        window.removeEventListener("touchend", onTouchEnd);
+                      }
+                      window.addEventListener("mousemove", onMouseMove);
+                      window.addEventListener("mouseup", onMouseUp);
+                      window.addEventListener("touchmove", onTouchMove, { passive: false });
+                      window.addEventListener("touchend", onTouchEnd);
+                    };
+                    const startTableDrag = (e: React.MouseEvent) => {
+                      if (readOnly) return;
+                      e.preventDefault();
+                      beginTableDrag(e.clientX, e.clientY);
+                    };
+                    const startTableDragTouch = (e: React.TouchEvent) => {
+                      if (readOnly) return;
+                      const touch = e.touches[0];
+                      if (!touch) return;
+                      beginTableDrag(touch.clientX, touch.clientY);
                     };
                     return (
                       <div key={t.id}>
                         <div
                           onMouseDown={startTableDrag}
+                          onTouchStart={startTableDragTouch}
                           className="absolute border-2 flex items-center justify-center text-center px-2"
                           style={{
                             left: pos.cx - pos.w / 2,
@@ -2531,6 +2739,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                             borderColor: C.goldSoft,
                             backgroundColor: "#fff",
                             cursor: readOnly ? "default" : "move",
+                            touchAction: "none",
                           }}
                         >
                           <input
@@ -2546,6 +2755,7 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                               }
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
+                            onTouchStart={(e) => e.stopPropagation()}
                             disabled={readOnly}
                             title="Click to rename this table"
                             className="text-[11px] font-medium leading-tight text-center bg-transparent outline-none w-full"
@@ -2568,6 +2778,15 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
                             <div
                               key={seatId}
                               onClick={() => handleSeatClick(seatId)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  handleSeatClick(seatId);
+                                }
+                              }}
+                              role="button"
+                              tabIndex={readOnly ? -1 : 0}
+                              aria-label={guestName ? (guestNote ? `${guestName} — ${guestNote}` : guestName) : "Empty seat"}
                               onDragOver={(e) => e.preventDefault()}
                               onDrop={(e) => handleDrop(e, seatId)}
                               onMouseEnter={() => guestId && setHoveredGuest(guestId)}
@@ -2720,10 +2939,26 @@ export default function SeatingPlanner({ eventId, initialName, initialData, role
         )}
       </main>
 
+      {undo && (
+        <div
+          className="fixed z-40 left-4 right-24 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 bottom-20 sm:bottom-6 flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl shadow-lg"
+          style={{ backgroundColor: C.ink, color: C.paper, maxWidth: 420 }}
+        >
+          <span className="text-sm">{undo.message}</span>
+          <button
+            onClick={performUndo}
+            className="flex items-center gap-1.5 text-sm font-semibold shrink-0"
+            style={{ color: C.goldSoft }}
+          >
+            <Undo2 size={14} /> Undo
+          </button>
+        </div>
+      )}
+
       <AgentChat
         eventId={eventId}
         role={role}
-        getState={() => ({ tableGroups, guests, groups, constraints, seatAssignment, fillMode })}
+        getState={() => ({ tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides })}
         onApply={applyAgentOperations}
       />
     </div>

@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import NewEventButton from "./NewEventButton";
+import EventsList from "./EventsList";
 
 const C = {
   ink: "#221F2B",
@@ -10,7 +10,7 @@ const C = {
   gold: "#A8823C",
   goldSoft: "#E7D9B8",
   line: "#E4DCC9",
-  muted: "#8A8272",
+  muted: "#736D5F",
 };
 
 export default async function EventsPage() {
@@ -50,38 +50,7 @@ export default async function EventsPage() {
           <NewEventButton ownerId={user.id} />
         </div>
 
-        <div className="flex flex-col gap-3">
-          {(events ?? []).length === 0 && (
-            <div className="p-6 rounded-xl border text-center" style={{ borderColor: C.line, backgroundColor: C.card }}>
-              <p className="text-sm" style={{ color: C.muted }}>
-                No events yet — create your first one above.
-              </p>
-            </div>
-          )}
-          {(events ?? []).map((ev) => (
-            <Link
-              key={ev.id}
-              href={`/events/${ev.id}`}
-              className="block p-5 rounded-xl border transition-colors"
-              style={{ borderColor: C.line, backgroundColor: C.card, textDecoration: "none", color: C.ink }}
-            >
-              <div className="flex flex-wrap items-center gap-2 text-base font-medium" style={{ fontFamily: "Fraunces, serif" }}>
-                {ev.name || "Untitled event"}
-                {ev.owner_id !== user.id && (
-                  <span
-                    className="text-[11px] font-medium rounded-full px-2 py-0.5"
-                    style={{ color: C.gold, border: `1px solid ${C.gold}`, fontFamily: "Inter, sans-serif" }}
-                  >
-                    shared with you
-                  </span>
-                )}
-              </div>
-              <div className="text-xs mt-1" style={{ color: C.muted }}>
-                Updated {new Date(ev.updated_at).toLocaleDateString()}
-              </div>
-            </Link>
-          ))}
-        </div>
+        <EventsList events={events ?? []} userId={user.id} />
       </div>
     </div>
   );

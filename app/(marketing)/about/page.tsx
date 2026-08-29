@@ -3,7 +3,7 @@ import FeedbackForm from "@/components/FeedbackForm";
 const C = {
   ink: "#221F2B",
   gold: "#A8823C",
-  muted: "#8A8272",
+  muted: "#736D5F",
 };
 
 export const metadata = {

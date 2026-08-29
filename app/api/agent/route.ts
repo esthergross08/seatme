@@ -40,6 +40,7 @@ interface EventState {
   constraints: ConstraintIn[];
   seatAssignment: SeatAssignmentIn;
   fillMode: "consolidate" | "spread";
+  tableNameOverrides?: Record<string, string>;
 }
 
 interface ChatTurn {
@@ -47,15 +48,18 @@ interface ChatTurn {
   content: string;
 }
 
-function buildTables(tableGroups: TableGroupIn[]) {
+function buildTables(tableGroups: TableGroupIn[], nameOverrides: Record<string, string> = {}) {
   const tables: { id: string; label: string; capacity: number }[] = [];
   (tableGroups || []).forEach((g) => {
     const count = Number(g.count) > 0 ? Number(g.count) : 1;
     const capacity = Number(g.capacity) > 0 ? Number(g.capacity) : 1;
     for (let i = 0; i < count; i++) {
+      const id = `${g.id}-${i}`;
+      const autoLabel = count > 1 ? `${g.label} ${i + 1}` : g.label;
+      const override = nameOverrides[id];
       tables.push({
-        id: `${g.id}-${i}`,
-        label: count > 1 ? `${g.label} ${i + 1}` : g.label,
+        id,
+        label: override && override.trim().length > 0 ? override : autoLabel,
         capacity,
       });
     }
@@ -64,7 +68,7 @@ function buildTables(tableGroups: TableGroupIn[]) {
 }
 
 function buildContext(state: EventState): string {
-  const tables = buildTables(state.tableGroups);
+  const tables = buildTables(state.tableGroups, state.tableNameOverrides || {});
   const tableById = Object.fromEntries(tables.map((t) => [t.id, t]));
   const seatCountByTable: Record<string, number> = {};
   const guestTableLabel: Record<string, string> = {};

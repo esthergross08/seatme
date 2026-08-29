@@ -12,7 +12,7 @@ const C = {
   wine: "#8C3B3B",
   sage: "#54704F",
   line: "#E4DCC9",
-  muted: "#8A8272",
+  muted: "#736D5F",
 };
 
 const genId = () => Math.random().toString(36).slice(2, 9);

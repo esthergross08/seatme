@@ -4,7 +4,7 @@ const C = {
   ink: "#221F2B",
   paper: "#F7F3EA",
   gold: "#A8823C",
-  muted: "#8A8272",
+  muted: "#736D5F",
 };
 
 export default function NotFound() {

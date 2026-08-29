@@ -10,7 +10,7 @@ const C = {
   gold: "#A8823C",
   goldSoft: "#E7D9B8",
   line: "#E4DCC9",
-  muted: "#8A8272",
+  muted: "#736D5F",
 };
 
 const FEATURES = [
