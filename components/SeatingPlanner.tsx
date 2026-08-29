@@ -53,6 +53,25 @@ const FONTS = `
 
 const genId = () => Math.random().toString(36).slice(2, 9);
 
+// Compact 1-2 char avatar initials for a guest name — "Jane Doe" -> "JD", "Cher" -> "C".
+function guestInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+}
+
+// One-line context summary for a guest row — mirrors the mockup's "no shellfish" /
+// "plus one" / "arriving late" style subtitle. Picks the single most useful thing to
+// surface: a note first (most specific), then meal choice, then a non-default RSVP status.
+function guestContextLine(g: Guest): string | null {
+  if (g.note && g.note.trim()) return g.note.trim();
+  if (g.mealChoice && g.mealChoice.trim()) return g.mealChoice.trim();
+  if (g.rsvpStatus === "declined") return "Declined";
+  if (g.rsvpStatus === "pending" || !g.rsvpStatus) return "RSVP pending";
+  return null;
+}
+
 // Compact 1-3 char badge for an event name — "Ellis & Rowan" -> "E&R", "Company Offsite" -> "CO".
 function eventInitials(name: string): string {
   const trimmed = name.trim();
@@ -867,6 +886,7 @@ export default function SeatingPlanner({
   const [floorPlanSuggestion, setFloorPlanSuggestion] = useState<{ tables: TableGroup[]; note: string | null } | null>(null);
   const [guestSearch, setGuestSearch] = useState("");
   const [compactGuestRows, setCompactGuestRows] = useState(false);
+  const [rsvpFilter, setRsvpFilter] = useState<"all" | "attending" | "pending" | "declined">("all");
   const [undo, setUndo] = useState<{ message: string; restore: () => void } | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exportMenuRef = useRef<HTMLDetailsElement>(null);
@@ -1004,13 +1024,16 @@ export default function SeatingPlanner({
   const guestById = useMemo(() => Object.fromEntries(guests.map((g) => [g.id, g])), [guests]);
   const visibleGuests = useMemo(() => {
     const q = guestSearch.trim().toLowerCase();
-    const filtered = q
+    let filtered = q
       ? guests.filter(
           (g) => g.name.toLowerCase().includes(q) || (g.note ?? "").toLowerCase().includes(q) || (g.mealChoice ?? "").toLowerCase().includes(q)
         )
       : guests;
+    if (rsvpFilter !== "all") {
+      filtered = filtered.filter((g) => (g.rsvpStatus ?? "pending") === rsvpFilter);
+    }
     return [...filtered].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-  }, [guests, guestSearch]);
+  }, [guests, guestSearch, rsvpFilter]);
   // First guest id for each letter, in the sorted+filtered list — powers the A-Z jump index.
   const guestLetterIndex = useMemo(() => {
     const m: Record<string, string> = {};
@@ -2706,22 +2729,40 @@ export default function SeatingPlanner({
               </div>
 
               {guests.length > 5 && (
-                <div className="mb-2 flex items-center gap-3">
-                  <div className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border" style={{ borderColor: C.line, backgroundColor: C.card }}>
-                    <Search size={13} style={{ color: C.muted }} />
-                    <input
-                      value={guestSearch}
-                      onChange={(e) => setGuestSearch(e.target.value)}
-                      placeholder="Search guests…"
-                      aria-label="Search guests"
-                      className="flex-1 bg-transparent outline-none text-xs"
-                      style={{ color: C.ink }}
-                    />
+                <div className="mb-2 flex flex-col gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border" style={{ borderColor: C.line, backgroundColor: C.card }}>
+                      <Search size={13} style={{ color: C.muted }} />
+                      <input
+                        value={guestSearch}
+                        onChange={(e) => setGuestSearch(e.target.value)}
+                        placeholder="Search guests…"
+                        aria-label="Search guests"
+                        className="flex-1 bg-transparent outline-none text-xs"
+                        style={{ color: C.ink }}
+                      />
+                    </div>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer shrink-0" style={{ color: C.muted }}>
+                      <input type="checkbox" checked={compactGuestRows} onChange={(e) => setCompactGuestRows(e.target.checked)} />
+                      Compact view
+                    </label>
                   </div>
-                  <label className="flex items-center gap-1.5 text-xs cursor-pointer shrink-0" style={{ color: C.muted }}>
-                    <input type="checkbox" checked={compactGuestRows} onChange={(e) => setCompactGuestRows(e.target.checked)} />
-                    Compact view
-                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(["all", "attending", "pending", "declined"] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setRsvpFilter(f)}
+                        className="text-[10px] font-medium px-2.5 py-1 rounded-full border"
+                        style={{
+                          borderColor: rsvpFilter === f ? C.ink : C.line,
+                          backgroundColor: rsvpFilter === f ? C.ink : "transparent",
+                          color: rsvpFilter === f ? C.paper : C.muted,
+                        }}
+                      >
+                        {f === "all" ? "All" : f === "attending" ? "Attending" : f === "pending" ? "Pending" : "Declined"}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -2732,17 +2773,34 @@ export default function SeatingPlanner({
                     No guests match &quot;{guestSearch}&quot;.
                   </div>
                 )}
-                {visibleGuests.map((g) => (
+                {visibleGuests.map((g) => {
+                  const avatarColor = g.groupIds?.map((gid) => groupById[gid]?.color).find(Boolean) ?? null;
+                  const contextLine = guestContextLine(g);
+                  return (
                   <div key={g.id} id={`guest-row-${g.id}`} className="px-3 py-2 border-b last:border-b-0 scroll-mt-24" style={{ borderColor: C.line }}>
                     <div className="flex items-center gap-2">
-                      <input
-                        value={g.name}
-                        onChange={(e) => renameGuest(g.id, e.target.value)}
-                        disabled={readOnly}
-                        aria-label="Guest name"
-                        className="flex-1 bg-transparent outline-none text-sm"
-                        style={{ color: C.ink, fontFamily: "Fraunces, serif" }}
-                      />
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold"
+                        style={{ backgroundColor: avatarColor ?? C.goldSoft, color: avatarColor ? "#fff" : C.gold }}
+                        aria-hidden
+                      >
+                        {guestInitials(g.name || "?")}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <input
+                          value={g.name}
+                          onChange={(e) => renameGuest(g.id, e.target.value)}
+                          disabled={readOnly}
+                          aria-label="Guest name"
+                          className="w-full bg-transparent outline-none text-sm"
+                          style={{ color: C.ink, fontFamily: "Fraunces, serif" }}
+                        />
+                        {contextLine && (
+                          <div className="text-[10px] truncate" style={{ color: C.muted }}>
+                            {contextLine}
+                          </div>
+                        )}
+                      </div>
                       <span className="text-[10px] shrink-0 whitespace-nowrap" style={{ color: seatOfGuest[g.id] ? C.sage : C.muted }}>
                         {seatOfGuest[g.id]
                           ? `Seated · ${tableById[seatsById[seatOfGuest[g.id]]?.tableId ?? ""]?.label ?? ""}`
@@ -2814,7 +2872,8 @@ export default function SeatingPlanner({
                       </>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 <div className="flex items-center gap-2 px-3 py-2">
                   <input
                     value={newGuestName}
