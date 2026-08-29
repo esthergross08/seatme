@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Search, Trash2, Undo2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -21,6 +22,9 @@ interface EventRow {
   event_date?: string | null;
   location?: string | null;
   max_capacity?: number | null;
+  // Fetched via `select("*")` upstream — carried through untyped so a full row
+  // (including the `data` seating-plan blob) can be re-inserted verbatim on undo.
+  [key: string]: unknown;
 }
 
 function formatEventDate(dateStr: string) {
@@ -34,11 +38,19 @@ function formatEventDate(dateStr: string) {
 type SortBy = "recent" | "name";
 
 export default function EventsList({ events, userId }: { events: EventRow[]; userId: string }) {
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("recent");
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [undo, setUndo] = useState<{ message: string; restore: () => void } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 6000);
+    return () => clearTimeout(t);
+  }, [error]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -53,27 +65,49 @@ export default function EventsList({ events, userId }: { events: EventRow[]; use
     return list;
   }, [events, hiddenIds, search, sortBy]);
 
-  // Deletion stays instant in the UI (no confirm dialog) but is deferred: the event is
-  // hidden immediately and only actually removed from the database once the undo window
-  // expires, so clicking Undo needs no database round-trip and can never fail to restore.
-  function handleDelete(ev: EventRow) {
+  // No confirmation dialog, per the usual pattern here — but the delete itself happens
+  // right away rather than being deferred. An earlier version deferred the actual database
+  // delete until the undo window expired, which turned out to be fragile: if you navigated
+  // away (into an event and back) before the timer fired, the delete could get lost, or a
+  // stale cached copy of this list could make it look like nothing happened either way.
+  // Undo now works by re-inserting the exact row that was deleted (same id and all), which
+  // is simple to reason about and doesn't depend on this component staying mounted.
+  async function handleDelete(ev: EventRow) {
     setHiddenIds((prev) => new Set(prev).add(ev.id));
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndo(null);
+
+    const supabase = createClient();
+    const { error: deleteError } = await supabase.from("events").delete().eq("id", ev.id);
+
+    if (deleteError) {
+      setHiddenIds((prev) => {
+        const next = new Set(prev);
+        next.delete(ev.id);
+        return next;
+      });
+      setError(`Couldn't delete "${ev.name || "Untitled event"}": ${deleteError.message}`);
+      return;
+    }
+
+    router.refresh();
     setUndo({
       message: `Deleted "${ev.name || "Untitled event"}".`,
-      restore: () => {
+      restore: async () => {
+        const { error: restoreError } = await supabase.from("events").insert(ev);
+        if (restoreError) {
+          setError(`Couldn't restore "${ev.name || "Untitled event"}": ${restoreError.message}`);
+          return;
+        }
         setHiddenIds((prev) => {
           const next = new Set(prev);
           next.delete(ev.id);
           return next;
         });
+        router.refresh();
       },
     });
-    undoTimerRef.current = setTimeout(async () => {
-      setUndo(null);
-      const supabase = createClient();
-      await supabase.from("events").delete().eq("id", ev.id);
-    }, 8000);
+    undoTimerRef.current = setTimeout(() => setUndo(null), 8000);
   }
 
   function performUndo() {
@@ -173,6 +207,15 @@ export default function EventsList({ events, userId }: { events: EventRow[]; use
           <button onClick={performUndo} className="flex items-center gap-1.5 text-sm font-semibold shrink-0" style={{ color: "#E7D9B8" }}>
             <Undo2 size={14} /> Undo
           </button>
+        </div>
+      )}
+
+      {error && !undo && (
+        <div
+          className="fixed z-40 left-1/2 -translate-x-1/2 bottom-6 px-4 py-2.5 rounded-xl shadow-lg text-sm"
+          style={{ backgroundColor: "#F3E4E4", color: "#8C3B3B", maxWidth: 420 }}
+        >
+          {error}
         </div>
       )}
     </div>

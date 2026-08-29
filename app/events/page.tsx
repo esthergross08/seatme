@@ -3,6 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import NewEventButton from "./NewEventButton";
 import EventsList from "./EventsList";
 
+// Always fetch fresh from the database — this page is mutated a lot from the client
+// (create, rename, delete), and the router's client-side cache showing a stale list
+// after navigating away and back is exactly the kind of "changes don't stick" bug
+// that's easy to mistake for a real data bug.
+export const dynamic = "force-dynamic";
+
 const C = {
   ink: "#221F2B",
   paper: "#F7F3EA",
