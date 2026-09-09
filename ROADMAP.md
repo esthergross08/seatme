@@ -74,6 +74,8 @@ Events reskin, phase 4 — guest sidebar (2026-08-29, same day): the final phase
 
 This closes out the events reskin: palette (kept original after Esther's steer), compact header, dot-based map seats with a names toggle, and now the guest sidebar.
 
+Multiple seats at the head/foot of rectangle tables (2026-08-29, same day): a follow-up to the earlier head/foot feature, which always reserved exactly one seat at each short end. Square and rectangle table types now have "Head" and "Foot" count fields (next to the shape dropdown in the Tables tab, only shown for those two shapes) — set either above 1 to seat more than one person across the short end of a wide table, common for a long head table with several people at the very end. Both default to 1, matching how every table worked before this existed, and the seat-numbering scheme was deliberately built to reproduce the original head/foot/side layout exactly at the 1/1 default, so no existing seating plan reshuffles. Extra head/foot seats spread evenly across the short edge (inset from the corners, same approach already used for the long sides), and each gets its own "Head"/"Foot" label on the map.
+
 ## Built, not yet turned on
 
 **AI table mockup image** — generates a photorealistic image of just the table (centerpiece, linens, place settings — no room, no people), grounded in the connected Pinterest board. Backend code is done (`/api/pinterest/mockup`, `lib/openaiImage.ts`) and left in place but dormant; the UI trigger button was intentionally removed from `DecorPanel.tsx` (2026-08-18) since it wasn't leading anywhere yet. Blocked on:

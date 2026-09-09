@@ -97,6 +97,10 @@ interface TableGroup {
   count: number | "";
   capacity: number | "";
   shape?: TableShape;
+  // Square/rectangle only — how many seats sit at each short end. Both default to 1
+  // (a single head, a single foot) to match how every table worked before this existed.
+  headCount?: number | "";
+  footCount?: number | "";
 }
 type FixtureType = "danceFloor" | "bar" | "stage";
 interface Fixture {
@@ -191,6 +195,8 @@ interface Table {
   label: string;
   capacity: number;
   shape: TableShape;
+  headCount: number;
+  footCount: number;
 }
 interface Seat {
   id: string;
@@ -208,12 +214,16 @@ function buildTables(tableGroups: TableGroup[], nameOverrides: Record<string, st
       const id = `${g.id}-${i}`;
       const autoLabel = count > 1 ? `${g.label} ${i + 1}` : g.label;
       const override = nameOverrides[id];
+      const headCount = Number(g.headCount) > 0 ? Number(g.headCount) : 1;
+      const footCount = Number(g.footCount) > 0 ? Number(g.footCount) : 1;
       tables.push({
         id,
         groupId: g.id,
         label: override && override.trim().length > 0 ? override : autoLabel,
         capacity,
         shape: g.shape || "round",
+        headCount,
+        footCount,
       });
     }
   });
@@ -282,27 +292,48 @@ function shapeRadius(shape: TableShape) {
 // seat (click/drag), it's just always index 0 so it's a stable, labelable position. The
 // rest of the capacity splits evenly between the two long sides. Side seats use a
 // (k)/(count+1) spacing so they're evenly spread but never land exactly on a corner.
-function rectSeatRoles(n: number): { headIdx: number; footIdx: number | null } {
-  if (n <= 0) return { headIdx: -1, footIdx: null };
-  if (n === 1) return { headIdx: 0, footIdx: null };
-  const sideCount = n - 2;
-  const topCount = Math.ceil(sideCount / 2);
-  return { headIdx: 0, footIdx: 1 + topCount };
-}
-
-function rectSeatOffset(rw: number, rh: number, i: number, n: number) {
-  const { headIdx, footIdx } = rectSeatRoles(n);
-  if (i === headIdx) return { dx: -rw, dy: 0 };
-  if (footIdx !== null && i === footIdx) return { dx: rw, dy: 0 };
-  const sideCount = Math.max(0, n - 2);
+// Square/rectangle seat layout: `headCount` seats at the near short end, `footCount` at
+// the far short end (both default to 1 — a single head, a single foot, exactly how this
+// worked before either was configurable), and the remaining seats split evenly along the
+// two long sides. Index order is head(s), top side seats, foot(s), bottom side seats —
+// deliberately reproducing the original head=0/foot=1+topCount layout bit-for-bit when
+// headCount=footCount=1, so no existing saved seating plan visually reshuffles.
+function rectSeatRoles(n: number, headCount = 1, footCount = 1) {
+  if (n <= 0) return { headIdxs: [] as number[], sideTopIdxs: [] as number[], footIdxs: [] as number[], sideBottomIdxs: [] as number[] };
+  const hc = Math.max(0, Math.min(headCount, n));
+  const fc = Math.max(0, Math.min(footCount, n - hc));
+  const sideCount = n - hc - fc;
   const topCount = Math.ceil(sideCount / 2);
   const bottomCount = sideCount - topCount;
-  if (i >= 1 && i < 1 + topCount) {
-    const frac = i / (topCount + 1);
+  const headIdxs = Array.from({ length: hc }, (_, k) => k);
+  const sideTopIdxs = Array.from({ length: topCount }, (_, k) => hc + k);
+  const footIdxs = Array.from({ length: fc }, (_, k) => hc + topCount + k);
+  const sideBottomIdxs = Array.from({ length: bottomCount }, (_, k) => hc + topCount + fc + k);
+  return { headIdxs, sideTopIdxs, footIdxs, sideBottomIdxs };
+}
+
+// Spreads `c` seats evenly along a short edge of half-length `rh`, inset from the corners
+// (same frac = (k+1)/(c+1) approach used for the long sides). A single seat centers at 0,
+// matching the original always-centered head/foot seat exactly.
+function edgeSpread(k: number, c: number, rh: number): number {
+  if (c <= 1) return 0;
+  const frac = (k + 1) / (c + 1);
+  return -rh + frac * (2 * rh);
+}
+
+function rectSeatOffset(rw: number, rh: number, i: number, n: number, headCount = 1, footCount = 1) {
+  const { headIdxs, sideTopIdxs, footIdxs, sideBottomIdxs } = rectSeatRoles(n, headCount, footCount);
+  const hPos = headIdxs.indexOf(i);
+  if (hPos !== -1) return { dx: -rw, dy: edgeSpread(hPos, headIdxs.length, rh) };
+  const fPos = footIdxs.indexOf(i);
+  if (fPos !== -1) return { dx: rw, dy: edgeSpread(fPos, footIdxs.length, rh) };
+  const tPos = sideTopIdxs.indexOf(i);
+  if (tPos !== -1) {
+    const frac = (tPos + 1) / (sideTopIdxs.length + 1);
     return { dx: -rw + frac * (2 * rw), dy: -rh };
   }
-  const k = i - (1 + topCount + 1) + 1; // 1..bottomCount, counting from just after the foot seat
-  const frac = k / (bottomCount + 1);
+  const bPos = sideBottomIdxs.indexOf(i);
+  const frac = (bPos + 1) / (sideBottomIdxs.length + 1);
   return { dx: rw - frac * (2 * rw), dy: rh };
 }
 
@@ -311,11 +342,11 @@ function rectSeatOffset(rw: number, rh: number, i: number, n: number) {
 // axis doesn't leave seats floating far from the table edge). Square and rectangle tables
 // use the head/foot/sides layout above instead of a ring — guests at a rectangular table
 // sit along its straight sides in real life, not in a circle floating around it.
-function seatOffset(shape: TableShape, w: number, h: number, i: number, n: number, pad: number) {
+function seatOffset(shape: TableShape, w: number, h: number, i: number, n: number, pad: number, headCount = 1, footCount = 1) {
   const rw = w / 2 + pad;
   const rh = h / 2 + pad;
   if (shape === "square" || shape === "rectangle") {
-    return rectSeatOffset(rw, rh, i, n);
+    return rectSeatOffset(rw, rh, i, n, headCount, footCount);
   }
   const angle = -Math.PI / 2 + (2 * Math.PI * i) / (n || 1);
   return { dx: rw * Math.cos(angle), dy: rh * Math.sin(angle) };
@@ -1217,8 +1248,9 @@ export default function SeatingPlanner({
     const s = seatsById[seatId];
     if (!s) return { x: 0, y: 0 };
     const pos = layout.positions[s.tableId];
-    const shape = tableById[s.tableId]?.shape ?? "round";
-    const { dx, dy } = seatOffset(shape, pos.w, pos.h, s.seatIdx, s.capacity, 34);
+    const table = tableById[s.tableId];
+    const shape = table?.shape ?? "round";
+    const { dx, dy } = seatOffset(shape, pos.w, pos.h, s.seatIdx, s.capacity, 34, table?.headCount, table?.footCount);
     return { x: pos.cx + dx, y: pos.cy + dy };
   }
 
@@ -2398,6 +2430,44 @@ export default function SeatingPlanner({
                       <option value="rectangle">Rectangle</option>
                     </select>
                   </label>
+                  {(g.shape === "square" || g.shape === "rectangle") && (
+                    <>
+                      <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }} title="Seats at the head (short end)">
+                        Head
+                        <input
+                          type="number"
+                          min={0}
+                          max={g.capacity === "" ? undefined : g.capacity}
+                          value={g.headCount ?? 1}
+                          disabled={readOnly}
+                          onChange={(e) => updateTableGroup(g.id, { headCount: e.target.value === "" ? "" : Number(e.target.value) })}
+                          onBlur={() => {
+                            if (g.headCount === "" || g.headCount === undefined) updateTableGroup(g.id, { headCount: 1 });
+                          }}
+                          aria-label="Seats at the head"
+                          className="w-12 px-2 py-1 rounded-md border text-sm text-center"
+                          style={{ borderColor: C.line }}
+                        />
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }} title="Seats at the foot (opposite short end)">
+                        Foot
+                        <input
+                          type="number"
+                          min={0}
+                          max={g.capacity === "" ? undefined : g.capacity}
+                          value={g.footCount ?? 1}
+                          disabled={readOnly}
+                          onChange={(e) => updateTableGroup(g.id, { footCount: e.target.value === "" ? "" : Number(e.target.value) })}
+                          onBlur={() => {
+                            if (g.footCount === "" || g.footCount === undefined) updateTableGroup(g.id, { footCount: 1 });
+                          }}
+                          aria-label="Seats at the foot"
+                          className="w-12 px-2 py-1 rounded-md border text-sm text-center"
+                          style={{ borderColor: C.line }}
+                        />
+                      </label>
+                    </>
+                  )}
                   <IconBtn danger title="Remove table type" onClick={() => removeTableGroupWithUndo(g.id)} disabled={readOnly}>
                     <Trash2 size={15} />
                   </IconBtn>
@@ -3459,7 +3529,7 @@ export default function SeatingPlanner({
                   {visibleTables.map((t) => {
                     const basePos = layout.positions[t.id];
                     const pos = dragTable && dragTable.id === t.id ? { ...basePos, cx: dragTable.x, cy: dragTable.y } : basePos;
-                    const seatRoles = t.shape === "square" || t.shape === "rectangle" ? rectSeatRoles(t.capacity) : null;
+                    const seatRoles = t.shape === "square" || t.shape === "rectangle" ? rectSeatRoles(t.capacity, t.headCount, t.footCount) : null;
                     const beginTableDrag = (startClientX: number, startClientY: number) => {
                       const startX = basePos.cx;
                       const startY = basePos.cy;
@@ -3551,7 +3621,7 @@ export default function SeatingPlanner({
                         </div>
                         {Array.from({ length: t.capacity }).map((_, i) => {
                           const seatId = `${t.id}#${i}`;
-                          const { dx, dy } = seatOffset(t.shape, pos.w, pos.h, i, t.capacity, 34);
+                          const { dx, dy } = seatOffset(t.shape, pos.w, pos.h, i, t.capacity, 34, t.headCount, t.footCount);
                           const x = pos.cx + dx;
                           const y = pos.cy + dy;
                           const guestId = seatAssignment[seatId];
@@ -3562,9 +3632,9 @@ export default function SeatingPlanner({
                           const hasViolation = flatViolations.some((v) => v.status === "violated" && (v.seatA === seatId || v.seatB === seatId));
                           const emphasizeNote = highlightNotes && !!guestNote;
                           const seatRoleLabel =
-                            seatRoles && i === seatRoles.headIdx
+                            seatRoles && seatRoles.headIdxs.includes(i)
                               ? "Head"
-                              : seatRoles && seatRoles.footIdx !== null && i === seatRoles.footIdx
+                              : seatRoles && seatRoles.footIdxs.includes(i)
                               ? "Foot"
                               : null;
                           const boxW = showGuestNames ? 68 : 16;
