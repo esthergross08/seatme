@@ -352,6 +352,23 @@ function seatOffset(shape: TableShape, w: number, h: number, i: number, n: numbe
   return { dx: rw * Math.cos(angle), dy: rh * Math.sin(angle) };
 }
 
+// Smallest gap between any two seat centers around a table, used to decide whether
+// horizontal name tags would overlap and should switch to a narrower vertical layout.
+function minSeatSpacing(shape: TableShape, w: number, h: number, n: number, pad: number, headCount = 1, footCount = 1): number {
+  if (n <= 1) return Infinity;
+  const points = Array.from({ length: n }, (_, i) => seatOffset(shape, w, h, i, n, pad, headCount, footCount));
+  let min = Infinity;
+  for (let a = 0; a < points.length; a++) {
+    for (let b = a + 1; b < points.length; b++) {
+      const dx = points[a].dx - points[b].dx;
+      const dy = points[a].dy - points[b].dy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < min) min = dist;
+    }
+  }
+  return min;
+}
+
 function computeLayout(
   tables: Table[],
   positionOverrides: Record<string, { x: number; y: number }> = {},
@@ -3530,6 +3547,9 @@ export default function SeatingPlanner({
                     const basePos = layout.positions[t.id];
                     const pos = dragTable && dragTable.id === t.id ? { ...basePos, cx: dragTable.x, cy: dragTable.y } : basePos;
                     const seatRoles = t.shape === "square" || t.shape === "rectangle" ? rectSeatRoles(t.capacity, t.headCount, t.footCount) : null;
+                    // When seats are packed tightly enough that 68px-wide horizontal name
+                    // tags would overlap, switch those tags to a narrower vertical layout.
+                    const tagsCrowded = showGuestNames && minSeatSpacing(t.shape, pos.w, pos.h, t.capacity, 34, t.headCount, t.footCount) < 74;
                     const beginTableDrag = (startClientX: number, startClientY: number) => {
                       const startX = basePos.cx;
                       const startY = basePos.cy;
@@ -3637,8 +3657,8 @@ export default function SeatingPlanner({
                               : seatRoles && seatRoles.footIdxs.includes(i)
                               ? "Foot"
                               : null;
-                          const boxW = showGuestNames ? 68 : 16;
-                          const boxH = showGuestNames ? 30 : 16;
+                          const boxW = showGuestNames ? (tagsCrowded ? 26 : 68) : 16;
+                          const boxH = showGuestNames ? (tagsCrowded ? 68 : 30) : 16;
                           return (
                             <div key={seatId} className="absolute" style={{ left: x - boxW / 2, top: y - boxH / 2 }}>
                             {seatRoleLabel && (
@@ -3727,11 +3747,24 @@ export default function SeatingPlanner({
                               )}
                               {showGuestNames ? (
                                 <span
-                                  className="text-[10px] px-1 truncate"
-                                  style={{
-                                    fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
-                                    color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
-                                  }}
+                                  className={tagsCrowded ? "text-[10px] leading-none" : "text-[10px] px-1 truncate"}
+                                  style={
+                                    tagsCrowded
+                                      ? {
+                                          fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
+                                          color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
+                                          writingMode: "vertical-rl",
+                                          textOrientation: "mixed",
+                                          maxHeight: boxH - 4,
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                          whiteSpace: "nowrap",
+                                        }
+                                      : {
+                                          fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
+                                          color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
+                                        }
+                                  }
                                 >
                                   {guestName || "+"}
                                 </span>
