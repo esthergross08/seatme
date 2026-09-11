@@ -3548,8 +3548,11 @@ export default function SeatingPlanner({
                     const pos = dragTable && dragTable.id === t.id ? { ...basePos, cx: dragTable.x, cy: dragTable.y } : basePos;
                     const seatRoles = t.shape === "square" || t.shape === "rectangle" ? rectSeatRoles(t.capacity, t.headCount, t.footCount) : null;
                     // When seats are packed tightly enough that 68px-wide horizontal name
-                    // tags would overlap, switch those tags to a narrower vertical layout.
-                    const tagsCrowded = showGuestNames && minSeatSpacing(t.shape, pos.w, pos.h, t.capacity, 34, t.headCount, t.footCount) < 74;
+                    // tags would actually overlap, switch those tags to a narrower vertical
+                    // layout. Threshold is intentionally below 68 (not just under it) so
+                    // ordinary tables — even fairly full 8-tops — keep the familiar
+                    // horizontal tag; only genuinely crowded tables switch.
+                    const tagsCrowded = showGuestNames && minSeatSpacing(t.shape, pos.w, pos.h, t.capacity, 34, t.headCount, t.footCount) < 64;
                     const beginTableDrag = (startClientX: number, startClientY: number) => {
                       const startX = basePos.cx;
                       const startY = basePos.cy;
@@ -3657,8 +3660,8 @@ export default function SeatingPlanner({
                               : seatRoles && seatRoles.footIdxs.includes(i)
                               ? "Foot"
                               : null;
-                          const boxW = showGuestNames ? (tagsCrowded ? 26 : 68) : 16;
-                          const boxH = showGuestNames ? (tagsCrowded ? 68 : 30) : 16;
+                          const boxW = showGuestNames ? (tagsCrowded ? 22 : 68) : 16;
+                          const boxH = showGuestNames ? (tagsCrowded ? 58 : 30) : 16;
                           return (
                             <div key={seatId} className="absolute" style={{ left: x - boxW / 2, top: y - boxH / 2 }}>
                             {seatRoleLabel && (
