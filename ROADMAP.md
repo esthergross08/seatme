@@ -80,6 +80,8 @@ Vertical name tags for crowded tables (2026-09-11): on the Map view, when a tabl
 
 Fixed, same day: the "crowded" threshold above was miscalibrated and flagged ordinary 8+ seat round tables (a very common size) as crowded, and the taller tag box used up all of the seat's existing padding with no margin — together this pushed the seating-map canvas noticeably larger, appearing on load as a big blank area until you scrolled to find the tables. Tightened the threshold to only trigger on genuinely tight tables and shrank the vertical tag box slightly so it stays safely within the existing padding.
 
+Fixed, same day: the crowded-table vertical name tags used CSS `writing-mode: vertical-rl` to rotate the text, which html2canvas (the library behind the "PDF (seat map)" export) doesn't render at all — every name on a crowded table was silently missing from the exported PDF even though it looked fine on screen. Switched to a plain CSS rotate transform instead, which html2canvas handles correctly, so exported PDFs now match what's on screen.
+
 ## Built, not yet turned on
 
 **AI table mockup image** — generates a photorealistic image of just the table (centerpiece, linens, place settings — no room, no people), grounded in the connected Pinterest board. Backend code is done (`/api/pinterest/mockup`, `lib/openaiImage.ts`) and left in place but dormant; the UI trigger button was intentionally removed from `DecorPanel.tsx` (2026-08-18) since it wasn't leading anywhere yet. Blocked on:

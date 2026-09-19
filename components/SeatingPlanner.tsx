@@ -3749,19 +3749,24 @@ export default function SeatingPlanner({
                                 />
                               )}
                               {showGuestNames ? (
+                                // Crowded tags use a CSS rotate transform rather than
+                                // writing-mode: vertical-rl — html2canvas (used for the PDF
+                                // export) rasterizes transforms reliably but doesn't render
+                                // vertical writing-mode text at all, which was silently
+                                // dropping every name from the exported seat map.
                                 <span
-                                  className={tagsCrowded ? "text-[10px] leading-none" : "text-[10px] px-1 truncate"}
+                                  className={
+                                    tagsCrowded
+                                      ? "text-[10px] leading-none whitespace-nowrap overflow-hidden text-ellipsis inline-block"
+                                      : "text-[10px] px-1 truncate"
+                                  }
                                   style={
                                     tagsCrowded
                                       ? {
                                           fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
                                           color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
-                                          writingMode: "vertical-rl",
-                                          textOrientation: "mixed",
-                                          maxHeight: boxH - 4,
-                                          overflow: "hidden",
-                                          textOverflow: "ellipsis",
-                                          whiteSpace: "nowrap",
+                                          width: boxH - 8,
+                                          transform: "rotate(-90deg)",
                                         }
                                       : {
                                           fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
