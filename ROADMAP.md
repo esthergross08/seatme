@@ -82,6 +82,8 @@ Fixed, same day: the "crowded" threshold above was miscalibrated and flagged ord
 
 Fixed, same day: the crowded-table vertical name tags used CSS `writing-mode: vertical-rl` to rotate the text, which html2canvas (the library behind the "PDF (seat map)" export) doesn't render at all — every name on a crowded table was silently missing from the exported PDF even though it looked fine on screen. Switched to a plain CSS rotate transform instead, which html2canvas handles correctly, so exported PDFs now match what's on screen.
 
+AI assistant usage logging (2026-09-19): there was previously no way to tell how many people actually use the AI assistant to make changes versus doing everything manually — the chat API route never wrote anything to the database. Added an `agent_log` table and a client-side insert in `applyAgentOperations` (SeatingPlanner.tsx) that logs one row — event, user, how many operations, which operation types — each time someone actually applies one or more AI-proposed changes (not just sends a chat message; best-effort, never blocks the apply itself). The admin report now shows users who've used the assistant vs. those who haven't, total changes applied, and the most common change types. Only counts usage from this date forward — no history before it.
+
 ## Built, not yet turned on
 
 **AI table mockup image** — generates a photorealistic image of just the table (centerpiece, linens, place settings — no room, no people), grounded in the connected Pinterest board. Backend code is done (`/api/pinterest/mockup`, `lib/openaiImage.ts`) and left in place but dormant; the UI trigger button was intentionally removed from `DecorPanel.tsx` (2026-08-18) since it wasn't leading anywhere yet. Blocked on:

@@ -196,7 +196,7 @@ function esc(str) {
 async function main() {
   console.log("Pulling data from Supabase…");
 
-  const [users, profilesRes, eventsRes, membersRes, accessRes, importRes, visitsRes] = await Promise.all([
+  const [users, profilesRes, eventsRes, membersRes, accessRes, importRes, visitsRes, agentRes] = await Promise.all([
     fetchAllUsers(),
     supabase.from("profiles").select("id, first_name, last_name"),
     supabase.from("events").select("id, owner_id, name, created_at, updated_at"),
@@ -206,6 +206,7 @@ async function main() {
     supabase
       .from("site_visits")
       .select("user_id, path, referrer, utm_source, utm_medium, utm_campaign, visitor_hash, visited_at"),
+    supabase.from("agent_log").select("user_id, event_id, operations_count, operation_types, created_at"),
   ]);
 
   if (profilesRes.error) throw profilesRes.error;
@@ -214,6 +215,7 @@ async function main() {
   if (accessRes.error) throw accessRes.error;
   if (importRes.error) throw importRes.error;
   if (visitsRes.error) throw visitsRes.error;
+  if (agentRes.error) throw agentRes.error;
 
   const profiles = profilesRes.data ?? [];
   const events = eventsRes.data ?? [];
@@ -221,6 +223,7 @@ async function main() {
   const accessRows = accessRes.data ?? [];
   const importRows = importRes.data ?? [];
   const visitRows = visitsRes.data ?? [];
+  const agentRows = agentRes.data ?? [];
 
   const profileById = Object.fromEntries(profiles.map((p) => [p.id, p]));
   const emailToUserId = Object.fromEntries(
@@ -252,6 +255,12 @@ async function main() {
     (importsByUser[row.user_id] ??= []).push(row);
   }
 
+  const agentByUser = {};
+  for (const row of agentRows) {
+    if (!row.user_id) continue;
+    (agentByUser[row.user_id] ??= []).push(row);
+  }
+
   const cutoff7 = daysAgo(7);
   const cutoff30 = daysAgo(30);
 
@@ -273,6 +282,9 @@ async function main() {
     const imports = (importsByUser[u.id] ?? []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     const lastImport = imports.length ? imports[imports.length - 1] : null;
 
+    const agentUses = (agentByUser[u.id] ?? []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const lastAgentUse = agentUses.length ? agentUses[agentUses.length - 1] : null;
+
     return {
       id: u.id,
       email: u.email ?? "(no email)",
@@ -287,6 +299,8 @@ async function main() {
       eventsShared: sharedCountByUser[u.id] ?? 0,
       importsCount: imports.length,
       lastImportDate: fmtDate(lastImport?.created_at),
+      agentApplyCount: agentUses.length,
+      lastAgentUseDate: fmtDate(lastAgentUse?.created_at),
       sortKey,
     };
   });
@@ -312,6 +326,26 @@ async function main() {
   const importsWithRsvp = importRows.filter((r) => r.had_rsvp_data).length;
   const importsWithMeal = importRows.filter((r) => r.had_meal_data).length;
   const totalGuestsImported = importRows.reduce((sum, r) => sum + (r.guest_count || 0), 0);
+
+  // Agent vs. manual usage: logged only when a user actually applies one or more
+  // AI-proposed changes (see applyAgentOperations in SeatingPlanner.tsx) — not
+  // just for sending a chat message — so this reflects real usage, not chatter.
+  // Only started recording 2026-09-19, so there's no history from before that.
+  const totalAgentApplies = agentRows.length;
+  const usersWhoUsedAgent = new Set(agentRows.map((r) => r.user_id)).size;
+  const totalOperationsApplied = agentRows.reduce((sum, r) => sum + (r.operations_count || 0), 0);
+  const usersWithAnyEvent = rows.filter((r) => r.eventsOwned > 0 || r.eventsShared > 0).length;
+  const usersManualOnly = Math.max(0, usersWithAnyEvent - usersWhoUsedAgent);
+  const hasAnyAgentData = agentRows.length > 0;
+  const operationTypeCounts = {};
+  for (const row of agentRows) {
+    for (const t of row.operation_types || []) {
+      operationTypeCounts[t] = (operationTypeCounts[t] || 0) + 1;
+    }
+  }
+  const topOperationTypes = Object.entries(operationTypeCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
 
   // Site visits: covers the public marketing pages, including visitors who
   // never sign up — access_log above only ever sees people who already have
@@ -403,6 +437,8 @@ async function main() {
         <td>${r.eventsShared}</td>
         <td>${r.importsCount}</td>
         <td>${esc(r.lastImportDate ?? "—")}</td>
+        <td class="${r.agentApplyCount > 0 ? "sage" : ""}">${r.agentApplyCount}</td>
+        <td>${esc(r.lastAgentUseDate ?? "—")}</td>
       </tr>`;
     })
     .join("");
@@ -542,6 +578,10 @@ async function main() {
       ${statCard("Guests imported (total)", totalGuestsImported)}
       ${statCard("Imports with RSVP data", importsWithRsvp)}
       ${statCard("Imports with meal data", importsWithMeal)}
+      ${statCard("Users who've used the AI assistant", usersWhoUsedAgent)}
+      ${statCard("Users who haven't (but have events)", usersManualOnly)}
+      ${statCard("AI changes applied (batches)", totalAgentApplies)}
+      ${statCard("AI operations applied (total)", totalOperationsApplied)}
       ${statCard("Page views (7d)", pageViews7)}
       ${statCard("Page views (30d)", pageViews30)}
       ${statCard("Unique visitors (7d)", uniqueVisitors7)}
@@ -598,6 +638,23 @@ async function main() {
     }
 
     ${
+      !hasAnyAgentData
+        ? `<div class="note">No AI-assistant usage logged yet — this is a brand-new feature (2026-09-19). It records a row each time someone applies one or more AI-proposed changes (not just sending a chat message), so "manual only" users below may simply not have needed the assistant yet, not that they don't know it exists.</div>`
+        : `<div class="note">AI-assistant usage is only logged from when this feature was added (2026-09-19) — anyone who used the assistant before that won't show up here. A user counts as having "used the AI assistant" only once they've actually applied a proposed change, not just chatted with it.</div>`
+    }
+
+    ${
+      topOperationTypes.length > 0
+        ? `<div class="chart-card">
+            <div class="chart-title">Most common AI-applied change types</div>
+            <table><thead><tr><th>Change type</th><th>Times applied</th></tr></thead><tbody>
+              ${topOperationTypes.map(([t, c]) => `<tr><td class="muted">${esc(t)}</td><td>${c}</td></tr>`).join("")}
+            </tbody></table>
+          </div>`
+        : ""
+    }
+
+    ${
       !hasAnyAccessData
         ? `<div class="note">"Last seen in app" and "active in app" columns are powered by a new access log that only starts recording from when this feature was deployed — there's no historical data yet, so these will read empty/zero until users visit again. "Last sign-in" (from Supabase auth) still reflects full history.</div>`
         : `<div class="note">"Last seen in app" and "active in app" are based on actual page visits (once-per-day-per-user), tracked since this feature was added — they won't reflect any activity from before then. "Last sign-in" is Supabase's own auth timestamp and covers full history.</div>`
@@ -618,6 +675,8 @@ async function main() {
             <th>Events shared with</th>
             <th>Files imported</th>
             <th>Last import</th>
+            <th>AI changes applied</th>
+            <th>Last AI use</th>
           </tr>
         </thead>
         <tbody>

@@ -2184,6 +2184,29 @@ export default function SeatingPlanner({
     setSeatAssignment(workingSeatAssignment);
     setPicked(null);
 
+    // Best-effort usage logging: one row per batch of agent-proposed changes the
+    // user actually applied, so "agent vs. manual" usage can be answered later
+    // (see admin report). Never let this affect the apply itself.
+    const successCount = results.filter((r) => r.ok).length;
+    if (successCount > 0) {
+      const successTypes = Array.from(
+        new Set(results.filter((r) => r.ok).map((r) => operations[r.index]?.type).filter(Boolean))
+      );
+      const supabase = createClient();
+      supabase.auth
+        .getUser()
+        .then(({ data: { user } }) => {
+          if (!user) return;
+          return supabase.from("agent_log").insert({
+            event_id: eventId,
+            user_id: user.id,
+            operations_count: successCount,
+            operation_types: successTypes,
+          });
+        })
+        .catch(() => {});
+    }
+
     return results;
   }
 
