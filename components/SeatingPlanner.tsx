@@ -1056,6 +1056,8 @@ export default function SeatingPlanner({
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exportMenuRef = useRef<HTMLDetailsElement>(null);
   const [dragTable, setDragTable] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [resizingGroupId, setResizingGroupId] = useState<string | null>(null);
+  const [resizePreviewCapacity, setResizePreviewCapacity] = useState<number | null>(null);
   const [pendingImport, setPendingImport] = useState<{
     guests: { name: string; groupNames: string[]; email?: string; rsvpStatus?: RsvpStatus; mealChoice?: string }[];
     groupNames: string[];
@@ -4365,8 +4367,60 @@ export default function SeatingPlanner({
                       if (!touch) return;
                       beginTableDrag(touch.clientX, touch.clientY);
                     };
+
+                    // Resizing pulls the capacity of the whole table *type* up or down —
+                    // every physical table in this group shares one capacity already
+                    // (set in the Tables tab), so dragging one instance's edge resizes
+                    // them all together rather than creating a one-off size. ~16px of
+                    // horizontal drag per seat felt right at the default map scale;
+                    // doesn't try to live-reflow the whole floor plan mid-drag (every
+                    // other table's auto-placement would jump around), just shows a
+                    // "→ N seats" preview and commits the real layout change on release.
+                    const currentCapacity = t.capacity;
+                    const beginTableResize = (startClientX: number) => {
+                      const startCapacity = currentCapacity;
+                      setResizingGroupId(t.groupId);
+                      setResizePreviewCapacity(startCapacity);
+                      const compute = (clientX: number) => {
+                        const delta = Math.round((clientX - startClientX) / 16);
+                        return Math.max(1, Math.min(40, startCapacity + delta));
+                      };
+                      const onMouseMove = (ev: MouseEvent) => setResizePreviewCapacity(compute(ev.clientX));
+                      const onMouseUp = (ev: MouseEvent) => {
+                        const next = compute(ev.clientX);
+                        if (next !== startCapacity) updateTableGroup(t.groupId, { capacity: next });
+                        cleanup();
+                      };
+                      const onTouchMove = (ev: TouchEvent) => {
+                        const touch = ev.touches[0];
+                        if (!touch) return;
+                        ev.preventDefault();
+                        setResizePreviewCapacity(compute(touch.clientX));
+                      };
+                      const onTouchEnd = (ev: TouchEvent) => {
+                        const touch = ev.changedTouches[0];
+                        if (touch) {
+                          const next = compute(touch.clientX);
+                          if (next !== startCapacity) updateTableGroup(t.groupId, { capacity: next });
+                        }
+                        cleanup();
+                      };
+                      function cleanup() {
+                        setResizingGroupId(null);
+                        setResizePreviewCapacity(null);
+                        window.removeEventListener("mousemove", onMouseMove);
+                        window.removeEventListener("mouseup", onMouseUp);
+                        window.removeEventListener("touchmove", onTouchMove);
+                        window.removeEventListener("touchend", onTouchEnd);
+                      }
+                      window.addEventListener("mousemove", onMouseMove);
+                      window.addEventListener("mouseup", onMouseUp);
+                      window.addEventListener("touchmove", onTouchMove, { passive: false });
+                      window.addEventListener("touchend", onTouchEnd);
+                    };
+                    const isResizingThis = resizingGroupId === t.groupId;
                     return (
-                      <div key={t.id}>
+                      <div key={t.id} className="group">
                         <div
                           onMouseDown={startTableDrag}
                           onTouchStart={startTableDragTouch}
@@ -4402,7 +4456,47 @@ export default function SeatingPlanner({
                             className="text-[11px] font-medium leading-tight text-center bg-transparent outline-none w-full"
                             style={{ color: C.muted, fontFamily: "Inter, sans-serif" }}
                           />
+                          {isResizingThis && resizePreviewCapacity != null && (
+                            <div
+                              className="absolute text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none"
+                              style={{
+                                left: "50%",
+                                bottom: pos.h / 2 + 6,
+                                transform: "translateX(-50%)",
+                                backgroundColor: C.ink,
+                                color: "#fff",
+                              }}
+                            >
+                              {resizePreviewCapacity} seats
+                            </div>
+                          )}
                         </div>
+                        {!readOnly && (
+                          <div
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              beginTableResize(e.clientX);
+                            }}
+                            onTouchStart={(e) => {
+                              e.stopPropagation();
+                              const touch = e.touches[0];
+                              if (touch) beginTableResize(touch.clientX);
+                            }}
+                            title={`Drag to resize every "${t.label.replace(/\s\d+$/, "")}" table`}
+                            className="absolute rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                            style={{
+                              left: pos.cx + pos.w / 2 - 5,
+                              top: pos.cy - 9,
+                              width: 10,
+                              height: 18,
+                              backgroundColor: C.gold,
+                              border: "1.5px solid #fff",
+                              cursor: "ew-resize",
+                              touchAction: "none",
+                            }}
+                          />
+                        )}
                         {Array.from({ length: t.capacity }).map((_, i) => {
                           const seatId = `${t.id}#${i}`;
                           const { dx, dy } = seatOffset(t.shape, pos.w, pos.h, i, t.capacity, 34, t.headCount, t.footCount);

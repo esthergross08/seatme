@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Wand2, FileImage } from "lucide-react";
+import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Wand2, FileImage, ExternalLink, ShoppingBag } from "lucide-react";
 import { POSTER_LAYOUTS, POSTER_PALETTES, POSTER_FONTS } from "@/lib/posterTemplates";
+import { getEtsyRecommendations, buildEtsyAffiliateUrl, etsySearchUrl } from "@/lib/etsyRecommendations";
 
 const C = {
   ink: "#221F2B",
@@ -241,7 +242,7 @@ export default function DecorPanel({
       <p className="text-sm mb-6" style={{ color: C.muted }}>
         Pick a look for your printable seating chart poster below, and connect your inspiration board on Pinterest
         to get table decor suggestions — or let AI match the poster style to your board automatically. Decor
-        inspiration image generation and shop recommendations coming soon!
+        inspiration image generation coming soon!
       </p>
 
       {banner && (
@@ -387,6 +388,36 @@ export default function DecorPanel({
             {matchReason}
           </p>
         )}
+      </div>
+
+      <div className="mb-6 p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
+        <div className="flex items-center gap-2 mb-1">
+          <ShoppingBag size={16} style={{ color: C.gold }} />
+          <p className="text-sm font-medium" style={{ color: C.ink }}>
+            Etsy decor finds
+          </p>
+        </div>
+        <p className="text-xs mb-4" style={{ color: C.muted }}>
+          Matched to your {POSTER_PALETTES.find((p) => p.id === posterPalette)?.label ?? "chosen"} palette above. Opens Etsy search results in a new tab.
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {getEtsyRecommendations(posterPalette).map((cat) => (
+            <a
+              key={cat.label}
+              href={buildEtsyAffiliateUrl(etsySearchUrl(cat.query))}
+              target="_blank"
+              rel="noopener sponsored"
+              className="flex items-center justify-between gap-1.5 text-xs font-medium px-3 py-2.5 rounded-lg border"
+              style={{ borderColor: C.line, color: C.ink }}
+            >
+              {cat.label}
+              <ExternalLink size={12} style={{ color: C.muted }} className="shrink-0" />
+            </a>
+          ))}
+        </div>
+        <p className="text-[10px] mt-3" style={{ color: C.muted }}>
+          These are Etsy affiliate links — SeatMe may earn a small commission on purchases, at no extra cost to you.
+        </p>
       </div>
 
       {!connected && (
