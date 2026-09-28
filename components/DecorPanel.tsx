@@ -239,8 +239,9 @@ export default function DecorPanel({
         </h2>
       </div>
       <p className="text-sm mb-6" style={{ color: C.muted }}>
-        Connect your inspiration board on Pinterest and get table decor suggestions grounded in what you&apos;ve
-        actually pinned. Decor inspiration image generation and shop recommendations coming soon!
+        Pick a look for your printable seating chart poster below, and connect your inspiration board on Pinterest
+        to get table decor suggestions — or let AI match the poster style to your board automatically. Decor
+        inspiration image generation and shop recommendations coming soon!
       </p>
 
       {banner && (

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Wand2, LayoutGrid, Users, Sparkles } from "lucide-react";
+import { Wand2, LayoutGrid, Users, Sparkles, MessageCircle, FileImage } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 
 const C = {
@@ -20,6 +20,11 @@ const FEATURES = [
     body: "Set your rules — who must sit together, who can't — and let SeatMe find a plan that works, in seconds.",
   },
   {
+    icon: MessageCircle,
+    title: "Talk it through",
+    body: "Ask the built-in assistant to move a guest, seat a family together, or clear a table — it makes the change right away, and you can always undo.",
+  },
+  {
     icon: LayoutGrid,
     title: "A real floor plan",
     body: "Drag tables into place, pick round, oval, square, or rectangle, and see exactly how the room will look.",
@@ -27,12 +32,17 @@ const FEATURES = [
   {
     icon: Users,
     title: "Guests & RSVPs, organized",
-    body: "Import your list from a spreadsheet, tag groups, and see at a glance who's seated and who isn't.",
+    body: "Import your list from a spreadsheet, tag groups, track meal choices and notes, or turn on a shareable RSVP link so guests confirm themselves.",
   },
   {
     icon: Sparkles,
     title: "Decor inspiration",
     body: "Connect a Pinterest board and get table decor suggestions grounded in what you've actually pinned.",
+  },
+  {
+    icon: FileImage,
+    title: "A poster worth printing",
+    body: "Export a designed seating chart poster — mix and match layout, color palette, and typography, or let AI match it to your Pinterest board.",
   },
 ];
 
@@ -110,7 +120,7 @@ export default async function LoggedInHomePage() {
       </section>
 
       <section className="max-w-5xl mx-auto px-6 pb-24 pt-14">
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {FEATURES.map((f) => {
             const Icon = f.icon;
             return (

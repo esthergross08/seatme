@@ -37,17 +37,41 @@ export interface AgentChatProps {
   onApply: (operations: AgentOperation[]) => AgentApplyResult[] | Promise<AgentApplyResult[]>;
 }
 
+// Shown until the person either opens the assistant once or dismisses it —
+// a nudge for people who don't notice the floating button on its own.
+// Global (not per-event) since discovering the assistant once should count
+// everywhere, not just on the event where it happened.
+const INTRO_SEEN_KEY = "seatme_agent_intro_seen";
+
 export default function AgentChat({ eventId, role, getState, onApply }: AgentChatProps) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showIntro, setShowIntro] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, open, loading]);
+
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(INTRO_SEEN_KEY)) setShowIntro(true);
+    } catch {
+      // localStorage unavailable (private browsing, etc.) — just skip the nudge
+    }
+  }, []);
+
+  function dismissIntro() {
+    setShowIntro(false);
+    try {
+      localStorage.setItem(INTRO_SEEN_KEY, "1");
+    } catch {
+      // best-effort only
+    }
+  }
 
   if (role === "viewer") return null;
 
@@ -195,13 +219,42 @@ export default function AgentChat({ eventId, role, getState, onApply }: AgentCha
         </div>
       )}
 
+      {!open && showIntro && (
+        <div
+          className="fixed z-50 right-6 flex items-start gap-2 pl-3 pr-2 py-2 rounded-xl shadow-lg bottom-[140px] sm:bottom-[82px]"
+          style={{ background: C.ink, color: C.paper, maxWidth: 230 }}
+        >
+          <span className="text-xs leading-snug pt-0.5">
+            New: ask the assistant to seat guests, fix conflicts, or rearrange tables for you — try it!
+          </span>
+          <button
+            onClick={dismissIntro}
+            aria-label="Dismiss"
+            className="shrink-0 p-0.5 rounded hover:bg-white/10"
+            style={{ color: C.paper }}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setOpen((o) => !o);
+          dismissIntro();
+        }}
         className="fixed right-6 z-50 rounded-full shadow-xl flex items-center justify-center bottom-20 sm:bottom-6"
         style={{ width: 52, height: 52, background: C.gold, color: "#fff" }}
         aria-label="Open assistant"
       >
-        {open ? <X size={20} /> : <MessageCircle size={20} />}
+        {!open && showIntro && (
+          <span
+            className="absolute inset-0 rounded-full animate-ping"
+            style={{ background: C.gold, opacity: 0.6 }}
+            aria-hidden
+          />
+        )}
+        {open ? <X size={20} /> : <MessageCircle size={20} className="relative" />}
       </button>
     </>
   );

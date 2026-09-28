@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Wand2, LayoutGrid, Users, Sparkles, MessageCircle, Upload } from "lucide-react";
+import { Wand2, LayoutGrid, Users, Sparkles, MessageCircle, Upload, ClipboardCheck, FileImage } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 
 const C = {
@@ -22,7 +22,7 @@ const FEATURES = [
   {
     icon: MessageCircle,
     title: "Talk it through",
-    body: "Ask the built-in assistant to move a guest, seat a family together, or clear a table — just say what you want changed.",
+    body: "Ask the built-in assistant to move a guest, seat a family together, or clear a table — it makes the change right away, and you can always undo.",
   },
   {
     icon: LayoutGrid,
@@ -43,6 +43,16 @@ const FEATURES = [
     icon: Sparkles,
     title: "Decor inspiration",
     body: "Connect a Pinterest board and get table decor suggestions grounded in what you've actually pinned.",
+  },
+  {
+    icon: ClipboardCheck,
+    title: "Guests RSVP themselves",
+    body: "Turn on a shareable link and QR code — guests confirm attendance, pick a meal, and leave a note, synced straight into your seating plan.",
+  },
+  {
+    icon: FileImage,
+    title: "A poster worth printing",
+    body: "Export a designed seating chart poster — mix and match layout, color palette, and typography, or let AI match it to your Pinterest board.",
   },
 ];
 
@@ -117,7 +127,7 @@ export default async function HomePage() {
       </section>
 
       <section className="max-w-5xl mx-auto px-6 pb-20">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {FEATURES.map((f) => {
             const Icon = f.icon;
             return (
