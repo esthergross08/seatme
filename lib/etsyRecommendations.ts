@@ -4,12 +4,13 @@
 // Links go to Etsy *search results*, not specific listings, since a specific
 // listing can sell out or get delisted; a search stays useful indefinitely.
 //
-// Monetization: if NEXT_PUBLIC_ETSY_AWIN_MERCHANT_ID and
-// NEXT_PUBLIC_ETSY_AWIN_AFFILIATE_ID are set (from Etsy's affiliate program,
-// which runs through the Awin network), every link is wrapped with Awin's
-// tracking redirect so a purchase earns commission. Until those are set, links
-// just go straight to Etsy — the feature works either way, so it can ship
-// before the affiliate account exists.
+// Monetization: if NEXT_PUBLIC_ETSY_RAKUTEN_MERCHANT_ID and
+// NEXT_PUBLIC_ETSY_RAKUTEN_AFFILIATE_ID are set (from Etsy's affiliate program,
+// which runs through Rakuten Advertising — Etsy's Affiliates page hands off to
+// a Rakuten sign-in), every link is wrapped with Rakuten's deep-link tracking
+// redirect so a purchase earns commission. Until those are set, links just go
+// straight to Etsy — the feature works either way, so it can ship before the
+// affiliate account exists.
 
 export interface EtsyCategory {
   label: string;
@@ -70,22 +71,24 @@ export function getEtsyRecommendations(paletteId: string | undefined | null): Et
   return RECOMMENDATIONS[paletteId || ""] || RECOMMENDATIONS.gold;
 }
 
-// Wraps a destination URL with Awin's tracking redirect when affiliate IDs are
-// configured, otherwise returns the destination as-is. The `p=` deep-link
-// format is Awin's standard, documented pattern — if Etsy's own Awin program
-// page generates a differently-shaped template when you sign up, swap it in
-// here (this is the only place it needs to change).
+// Wraps a destination URL with Rakuten Advertising's deep-link tracking redirect
+// when affiliate IDs are configured, otherwise returns the destination as-is.
+// `id` is the Rakuten-assigned affiliate/tracking ID (an 11-character code from
+// the Rakuten Advertising publisher dashboard, not Etsy's own site), `mid` is
+// the advertiser ID Rakuten assigns specifically to the Etsy program once
+// approved — both come from Rakuten after signup, not from Etsy directly. This
+// is Rakuten's standard, documented deep-link format; swap it here if Rakuten's
+// own link generator produces something shaped differently for this account.
 export function buildEtsyAffiliateUrl(destinationUrl: string): string {
-  const merchantId = process.env.NEXT_PUBLIC_ETSY_AWIN_MERCHANT_ID;
-  const affiliateId = process.env.NEXT_PUBLIC_ETSY_AWIN_AFFILIATE_ID;
+  const merchantId = process.env.NEXT_PUBLIC_ETSY_RAKUTEN_MERCHANT_ID;
+  const affiliateId = process.env.NEXT_PUBLIC_ETSY_RAKUTEN_AFFILIATE_ID;
   if (!merchantId || !affiliateId) return destinationUrl;
   const params = new URLSearchParams({
-    awinmid: merchantId,
-    awinaffid: affiliateId,
-    clickref: "seatme-decor",
-    p: destinationUrl,
+    id: affiliateId,
+    mid: merchantId,
+    murl: destinationUrl,
   });
-  return `https://www.awin1.com/cread.php?${params.toString()}`;
+  return `https://click.linksynergy.com/deeplink?${params.toString()}`;
 }
 
 export function etsySearchUrl(query: string): string {
