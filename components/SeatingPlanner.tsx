@@ -4531,6 +4531,14 @@ export default function SeatingPlanner({
                                           fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
                                           color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
                                           width: boxH - 8,
+                                          // Without this, the span is a flex child of the (deliberately
+                                          // narrow, boxW-wide) seat box, and flexbox was shrinking it
+                                          // back down to fit that width before the rotation ever
+                                          // happened — silently undoing the `width` above and leaving
+                                          // only a couple of characters visible. flexShrink: 0 lets the
+                                          // tag keep its real length and overflow the box, same as the
+                                          // Head/Foot role label already does above/below it.
+                                          flexShrink: 0,
                                           transform: "rotate(-90deg)",
                                         }
                                       : {
