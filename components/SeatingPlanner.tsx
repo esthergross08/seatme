@@ -459,8 +459,12 @@ function computeLayout(
         autoIdx++;
       }
       positions[t.id] = { cx, cy, r, w, h, seatR };
-      maxX = Math.max(maxX, cx + seatR + 20);
-      maxY = Math.max(maxY, cy + seatR + 20);
+      // +88 (not +20) because a crowded table's rotated vertical name tag can
+      // reach up to 50px beyond the seat center (see boxH in the seat-map
+      // render below) — this keeps those tags from clipping against the
+      // canvas edge on tables near the boundary.
+      maxX = Math.max(maxX, cx + seatR + 88);
+      maxY = Math.max(maxY, cy + seatR + 88);
     });
     const rows = Math.ceil(autoTables.length / cols);
     const gridHeight = Math.max(cell, rows * cell);
@@ -2031,7 +2035,11 @@ export default function SeatingPlanner({
     });
   }
 
-  function runSolver() {
+  // `forceReshuffle` is for the dedicated "Shuffle seating" action — a full
+  // re-solve from scratch regardless of the "keep close to current plan"
+  // checkbox, for when a plan already exists and the ask is specifically
+  // "give me a different arrangement," not "regenerate respecting my setting."
+  function runSolver(forceReshuffle = false) {
     if (readOnly) return;
     if (totalSeats < guests.length) return;
     setSolving(true);
@@ -2050,7 +2058,7 @@ export default function SeatingPlanner({
         flatPairs,
         poolSeatsById,
         fillMode,
-        minimizeChanges ? seatAssignment : {},
+        !forceReshuffle && minimizeChanges ? seatAssignment : {},
         autoGroupPairs
       );
       setSeatAssignment(result);
@@ -3767,7 +3775,7 @@ export default function SeatingPlanner({
                   </button>
                 </div>
                 <button
-                  onClick={runSolver}
+                  onClick={() => runSolver()}
                   disabled={readOnly || seatsShort || solving || guests.length === 0}
                   className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg disabled:opacity-40"
                   style={{ backgroundColor: C.gold, color: "#fff" }}
@@ -3775,6 +3783,18 @@ export default function SeatingPlanner({
                   <Wand2 size={15} />
                   {solving ? "Generating…" : "Auto-generate seating"}
                 </button>
+                {seatedCount > 0 && (
+                  <button
+                    onClick={() => runSolver(true)}
+                    disabled={readOnly || seatsShort || solving || guests.length === 0}
+                    title="Try a different arrangement from scratch, ignoring 'keep close to current plan'"
+                    className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
+                    style={{ borderColor: C.line, color: C.ink }}
+                  >
+                    <Shuffle size={15} />
+                    {solving ? "Shuffling…" : "Shuffle seating"}
+                  </button>
+                )}
                 <button
                   onClick={clearAllSeatsWithUndo}
                   disabled={readOnly || seatedCount === 0}
@@ -4307,7 +4327,11 @@ export default function SeatingPlanner({
                               ? "Foot"
                               : null;
                           const boxW = showGuestNames ? (tagsCrowded ? 22 : 68) : 16;
-                          const boxH = showGuestNames ? (tagsCrowded ? 58 : 30) : 16;
+                          // Crowded (rotated) tags were capped at 58px tall — only room for
+                          // a handful of characters before the ellipsis kicked in, so most
+                          // full names were unreadable. 100px gives a rotated tag roughly
+                          // twice the text room.
+                          const boxH = showGuestNames ? (tagsCrowded ? 100 : 30) : 16;
                           return (
                             <div key={seatId} className="absolute" style={{ left: x - boxW / 2, top: y - boxH / 2 }}>
                             {seatRoleLabel && (
