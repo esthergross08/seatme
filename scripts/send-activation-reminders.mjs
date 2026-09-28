@@ -9,6 +9,11 @@
 //
 // Usage:
 //   npm run send-activation-reminders
+//   npm run send-activation-reminders -- --resend        (also re-sends to
+//     anyone already reminded before, e.g. after updating the email template
+//     with better content — everyone still eligible gets it again)
+//   npm run send-activation-reminders -- --resend=7       (only re-sends to
+//     people whose last reminder was 7+ days ago, instead of everyone)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -59,12 +64,29 @@ const authClient = createClient(SUPABASE_URL, ANON_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+function parseResendFlag(argv) {
+  const flag = argv.find((a) => a === "--resend" || a.startsWith("--resend="));
+  if (!flag) return null;
+  const eq = flag.indexOf("=");
+  if (eq === -1) return 0; // bare --resend: no cooldown, resend to everyone eligible
+  const days = Number(flag.slice(eq + 1));
+  return Number.isFinite(days) && days >= 0 ? days : 0;
+}
+
 async function main() {
-  console.log("Checking for signed-up-but-never-confirmed users (24h+ old)…");
-  const result = await sendActivationReminders({ adminClient, authClient, minAgeHours: 24 });
+  const resendCooldownDays = parseResendFlag(process.argv.slice(2));
+
+  console.log(
+    resendCooldownDays == null
+      ? "Checking for signed-up-but-never-confirmed users (24h+ old)…"
+      : `Checking for signed-up-but-never-confirmed users (24h+ old), including previously-reminded ones${
+          resendCooldownDays > 0 ? ` last reminded ${resendCooldownDays}+ days ago` : ""
+        }…`
+  );
+  const result = await sendActivationReminders({ adminClient, authClient, minAgeHours: 24, resendCooldownDays });
 
   console.log(`\n${result.candidates} eligible (unconfirmed, 24h+ old).`);
-  console.log(`${result.alreadyReminded} already reminded previously (skipped).`);
+  console.log(`${result.alreadyReminded} already reminded previously${resendCooldownDays == null ? " (skipped)" : ""}.`);
   console.log(`${result.sent.length} reminder(s) sent just now:`);
   result.sent.forEach((email) => console.log(`  - ${email}`));
 
