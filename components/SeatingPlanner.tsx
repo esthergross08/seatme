@@ -1292,6 +1292,34 @@ export default function SeatingPlanner({
   const violatedCount = Object.values(constraintStatuses).filter((s) => s === "violated").length;
   const sideLabel = (type: "guest" | "group", id: string) =>
     (type === "group" ? groupById[id]?.name : guestById[id]?.name) || "—";
+
+  // Per-guest view of the same rules shown in the "Seating constraints" list
+  // below, so each guest's row can surface their own rules directly (a group
+  // rule fans out to every member) without needing a separate lookup.
+  const constraintTagsByGuestId = useMemo(() => {
+    const map: Record<string, { constraintId: string; type: "must" | "cannot"; label: string }[]> = {};
+    const addTag = (guestId: string, constraintId: string, type: "must" | "cannot", label: string) => {
+      (map[guestId] ??= []).push({ constraintId, type, label });
+    };
+    for (const c of constraints) {
+      const sides = [
+        { type: c.aType, id: c.aId },
+        { type: c.bType, id: c.bId },
+      ] as const;
+      for (let i = 0; i < 2; i++) {
+        const mine = sides[i];
+        const other = sides[1 - i];
+        const otherLabel = other.type === "group" ? groupById[other.id]?.name : guestById[other.id]?.name;
+        if (!otherLabel) continue;
+        if (mine.type === "guest") {
+          addTag(mine.id, c.id, c.type, otherLabel);
+        } else {
+          for (const gid of guestsByGroupId[mine.id] ?? []) addTag(gid, c.id, c.type, otherLabel);
+        }
+      }
+    }
+    return map;
+  }, [constraints, guestById, groupById, guestsByGroupId]);
   const liveSummary = useMemo(() => {
     const relevant = constraints.filter((c) => constraintStatuses[c.id] !== "empty");
     if (relevant.length === 0) return null;
@@ -3194,6 +3222,31 @@ export default function SeatingPlanner({
                             </button>
                           );
                         })}
+                      </div>
+                    )}
+                    {(constraintTagsByGuestId[g.id]?.length ?? 0) > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {constraintTagsByGuestId[g.id].map((t) => (
+                          <span
+                            key={t.constraintId}
+                            className="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-1 py-0.5 rounded-full font-medium"
+                            style={{
+                              backgroundColor: t.type === "must" ? "#EEF2EA" : "#F3E4E4",
+                              color: t.type === "must" ? C.sage : C.wine,
+                            }}
+                          >
+                            {t.type === "must" ? "with" : "not with"} {t.label}
+                            {!readOnly && (
+                              <button
+                                onClick={() => removeConstraintWithUndo(t.constraintId)}
+                                aria-label={`Remove rule: ${t.type === "must" ? "with" : "not with"} ${t.label}`}
+                                className="rounded-full hover:opacity-70"
+                              >
+                                <X size={9} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
                       </div>
                     )}
                     {!compactGuestRows && (
