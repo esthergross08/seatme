@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import SeatingPlanner from "@/components/SeatingPlanner";
@@ -35,16 +36,18 @@ export default async function EventPage({
       : members?.find((m) => m.email === user.email)?.role ?? "viewer";
 
   return (
-    <SeatingPlanner
-      eventId={event.id}
-      initialName={event.name ?? "Untitled event"}
-      initialData={event.data ?? null}
-      role={role as "owner" | "editor" | "viewer"}
-      members={members ?? []}
-      initialEventDate={event.event_date ?? null}
-      initialLocation={event.location ?? null}
-      initialMaxCapacity={event.max_capacity ?? null}
-      initialRsvpEnabled={event.rsvp_enabled ?? false}
-    />
+    <Suspense fallback={null}>
+      <SeatingPlanner
+        eventId={event.id}
+        initialName={event.name ?? "Untitled event"}
+        initialData={event.data ?? null}
+        role={role as "owner" | "editor" | "viewer"}
+        members={members ?? []}
+        initialEventDate={event.event_date ?? null}
+        initialLocation={event.location ?? null}
+        initialMaxCapacity={event.max_capacity ?? null}
+        initialRsvpEnabled={event.rsvp_enabled ?? false}
+      />
+    </Suspense>
   );
 }

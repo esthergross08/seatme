@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import {
   Plus,
   Trash2,
@@ -927,7 +928,27 @@ export default function SeatingPlanner({
   const [location, setLocation] = useState(initialLocation ?? "");
   const [maxCapacity, setMaxCapacity] = useState<number | "">(initialMaxCapacity ?? "");
   const [rsvpEnabled, setRsvpEnabled] = useState(initialRsvpEnabled ?? false);
-  const [tab, setTab] = useState("setup");
+  // The active tab is mirrored into the URL (?tab=…) so refreshing the page —
+  // or sharing/bookmarking a link — lands back on the same sub-page instead
+  // of always resetting to Tables. router.replace (not push) keeps tab
+  // switches out of the browser history stack, same as before.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const VALID_TABS = ["setup", "guests", "seating", "decor"];
+  const initialTabParam = searchParams.get("tab");
+  const [tab, setTabState] = useState<string>(
+    initialTabParam && VALID_TABS.includes(initialTabParam) ? initialTabParam : "setup"
+  );
+  const setTab = useCallback(
+    (id: string) => {
+      setTabState(id);
+      const params = new URLSearchParams(Array.from(searchParams.entries()));
+      params.set("tab", id);
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
   const [tableGroups, setTableGroups] = useState<TableGroup[]>(initialData?.tableGroups ?? []);
   const [guests, setGuests] = useState<Guest[]>(initialData?.guests ?? []);
   const [groups, setGroups] = useState<Group[]>(initialData?.groups ?? []);
