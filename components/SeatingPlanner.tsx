@@ -3522,7 +3522,7 @@ export default function SeatingPlanner({
                           className="w-full bg-transparent outline-none text-sm"
                           style={{ color: C.ink, fontFamily: "Fraunces, serif" }}
                         />
-                        {contextLine && (
+                        {compactGuestRows && contextLine && (
                           <div className="text-[10px] truncate" style={{ color: C.muted }}>
                             {contextLine}
                           </div>
