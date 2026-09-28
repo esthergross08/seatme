@@ -4315,7 +4315,9 @@ export default function SeatingPlanner({
 
                   {visibleTables.map((t) => {
                     const basePos = layout.positions[t.id];
-                    const pos = dragTable && dragTable.id === t.id ? { ...basePos, cx: dragTable.x, cy: dragTable.y } : basePos;
+                    const dragAdjustedPos =
+                      dragTable && dragTable.id === t.id ? { ...basePos, cx: dragTable.x, cy: dragTable.y } : basePos;
+                    const pos = dragAdjustedPos;
                     const seatRoles = t.shape === "square" || t.shape === "rectangle" ? rectSeatRoles(t.capacity, t.headCount, t.footCount) : null;
                     // When seats are packed tightly enough that 68px-wide horizontal name
                     // tags would actually overlap, switch those tags to a narrower vertical
@@ -4428,6 +4430,15 @@ export default function SeatingPlanner({
                       window.addEventListener("touchend", onTouchEnd);
                     };
                     const isResizingThis = resizingGroupId === t.groupId;
+                    // While actively dragging this table's resize handle, render at the
+                    // live preview scale instead of the committed t.sizeScale — grows/
+                    // shrinks on screen as you pull, same as the drag-to-reposition
+                    // preview does for position. The real tableGroups update (and the
+                    // one-time layout recompute for every other table) still only
+                    // happens once, on release, in beginTableResize above.
+                    const liveResizeRatio =
+                      isResizingThis && resizePreviewScale != null ? resizePreviewScale / (t.sizeScale || 1) : 1;
+                    const renderPos = liveResizeRatio !== 1 ? { ...pos, w: pos.w * liveResizeRatio, h: pos.h * liveResizeRatio } : pos;
                     return (
                       <div key={t.id} className="group">
                         <div
@@ -4435,10 +4446,10 @@ export default function SeatingPlanner({
                           onTouchStart={startTableDragTouch}
                           className="absolute border-2 flex items-center justify-center text-center px-2"
                           style={{
-                            left: pos.cx - pos.w / 2,
-                            top: pos.cy - pos.h / 2,
-                            width: pos.w,
-                            height: pos.h,
+                            left: renderPos.cx - renderPos.w / 2,
+                            top: renderPos.cy - renderPos.h / 2,
+                            width: renderPos.w,
+                            height: renderPos.h,
                             borderRadius: shapeRadius(t.shape),
                             borderColor: C.goldSoft,
                             backgroundColor: "#fff",
@@ -4470,7 +4481,7 @@ export default function SeatingPlanner({
                               className="absolute text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none"
                               style={{
                                 left: "50%",
-                                bottom: pos.h / 2 + 6,
+                                bottom: renderPos.h / 2 + 6,
                                 transform: "translateX(-50%)",
                                 backgroundColor: C.ink,
                                 color: "#fff",
@@ -4495,8 +4506,8 @@ export default function SeatingPlanner({
                             title={`Drag to resize every "${t.label.replace(/\s\d+$/, "")}" table`}
                             className="absolute rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                             style={{
-                              left: pos.cx + pos.w / 2 - 5,
-                              top: pos.cy - 9,
+                              left: renderPos.cx + renderPos.w / 2 - 5,
+                              top: renderPos.cy - 9,
                               width: 10,
                               height: 18,
                               backgroundColor: C.gold,
@@ -4508,9 +4519,9 @@ export default function SeatingPlanner({
                         )}
                         {Array.from({ length: t.capacity }).map((_, i) => {
                           const seatId = `${t.id}#${i}`;
-                          const { dx, dy } = seatOffset(t.shape, pos.w, pos.h, i, t.capacity, 34, t.headCount, t.footCount);
-                          const x = pos.cx + dx;
-                          const y = pos.cy + dy;
+                          const { dx, dy } = seatOffset(t.shape, renderPos.w, renderPos.h, i, t.capacity, 34, t.headCount, t.footCount);
+                          const x = renderPos.cx + dx;
+                          const y = renderPos.cy + dy;
                           const guestId = seatAssignment[seatId];
                           const guest = guestId ? guestById[guestId] : null;
                           const guestName = guest?.name ?? null;
