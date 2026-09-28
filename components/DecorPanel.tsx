@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Wand2 } from "lucide-react";
-import { POSTER_TEMPLATES } from "@/lib/posterTemplates";
+import { POSTER_LAYOUTS, POSTER_PALETTES, POSTER_FONTS } from "@/lib/posterTemplates";
 
 const C = {
   ink: "#221F2B",
@@ -34,11 +34,24 @@ interface Pin {
 export interface DecorPanelProps {
   eventId: string;
   readOnly: boolean;
-  posterTemplate?: string;
-  onPosterTemplateChange?: (id: string) => void;
+  posterLayout?: string;
+  posterPalette?: string;
+  posterFont?: string;
+  onPosterLayoutChange?: (id: string) => void;
+  onPosterPaletteChange?: (id: string) => void;
+  onPosterFontChange?: (id: string) => void;
 }
 
-export default function DecorPanel({ eventId, readOnly, posterTemplate = "classic", onPosterTemplateChange }: DecorPanelProps) {
+export default function DecorPanel({
+  eventId,
+  readOnly,
+  posterLayout = "clean",
+  posterPalette = "gold",
+  posterFont = "serif-classic",
+  onPosterLayoutChange,
+  onPosterPaletteChange,
+  onPosterFontChange,
+}: DecorPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -190,7 +203,9 @@ export default function DecorPanel({ eventId, readOnly, posterTemplate = "classi
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't match a style.");
-      onPosterTemplateChange?.(data.templateId);
+      if (data.layoutId) onPosterLayoutChange?.(data.layoutId);
+      if (data.paletteId) onPosterPaletteChange?.(data.paletteId);
+      if (data.fontId) onPosterFontChange?.(data.fontId);
       setMatchReason(data.reason || null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't match a style.");
@@ -234,38 +249,107 @@ export default function DecorPanel({ eventId, readOnly, posterTemplate = "classi
       )}
 
       <div className="mb-6 p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
-        <p className="text-sm mb-3 font-medium" style={{ color: C.ink }}>
+        <p className="text-sm mb-1 font-medium" style={{ color: C.ink }}>
           Seating chart poster style
         </p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-          {POSTER_TEMPLATES.map((t) => {
-            const active = posterTemplate === t.id;
-            return (
-              <button
-                key={t.id}
-                onClick={() => onPosterTemplateChange?.(t.id)}
-                disabled={readOnly}
-                className="text-left rounded-lg border p-2.5 disabled:opacity-40"
-                style={{
-                  borderColor: active ? t.accent : C.line,
-                  borderWidth: active ? 2 : 1,
-                  backgroundColor: t.background,
-                }}
-              >
-                <div
-                  className="h-8 rounded mb-2"
-                  style={{ backgroundColor: t.accent, border: `1px solid ${t.line}` }}
-                />
-                <div className="text-xs font-semibold" style={{ color: t.ink, fontFamily: t.headingFont }}>
-                  {t.label}
-                </div>
-                <div className="text-[11px] mt-0.5 leading-snug" style={{ color: t.muted }}>
-                  {t.description}
-                </div>
-              </button>
-            );
-          })}
+        <p className="text-xs mb-4" style={{ color: C.muted }}>
+          Layout, color, and type mix and match — pick each separately.
+        </p>
+
+        <div className="mb-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: C.muted }}>
+            Layout
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {POSTER_LAYOUTS.map((l) => {
+              const active = posterLayout === l.id;
+              return (
+                <button
+                  key={l.id}
+                  onClick={() => onPosterLayoutChange?.(l.id)}
+                  disabled={readOnly}
+                  className="text-left rounded-lg border p-2.5 disabled:opacity-40"
+                  style={{ borderColor: active ? C.gold : C.line, borderWidth: active ? 2 : 1 }}
+                >
+                  <div className="text-xs font-semibold" style={{ color: C.ink }}>
+                    {l.label}
+                  </div>
+                  <div className="text-[11px] mt-0.5 leading-snug" style={{ color: C.muted }}>
+                    {l.description}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
+
+        <div className="mb-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: C.muted }}>
+            Color palette
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {POSTER_PALETTES.map((p) => {
+              const active = posterPalette === p.id;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => onPosterPaletteChange?.(p.id)}
+                  disabled={readOnly}
+                  className="text-left rounded-lg border p-2.5 disabled:opacity-40"
+                  style={{
+                    borderColor: active ? p.accent : C.line,
+                    borderWidth: active ? 2 : 1,
+                    backgroundColor: p.background,
+                  }}
+                >
+                  <div className="h-6 rounded mb-2" style={{ backgroundColor: p.accent, border: `1px solid ${p.line}` }} />
+                  <div className="text-xs font-semibold" style={{ color: p.ink }}>
+                    {p.label}
+                  </div>
+                  <div className="text-[11px] mt-0.5 leading-snug" style={{ color: p.muted }}>
+                    {p.description}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: C.muted }}>
+            Typography
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {POSTER_FONTS.map((f) => {
+              const active = posterFont === f.id;
+              return (
+                <button
+                  key={f.id}
+                  onClick={() => onPosterFontChange?.(f.id)}
+                  disabled={readOnly}
+                  className="text-left rounded-lg border p-2.5 disabled:opacity-40"
+                  style={{ borderColor: active ? C.gold : C.line, borderWidth: active ? 2 : 1 }}
+                >
+                  <div
+                    className="text-sm"
+                    style={{
+                      color: C.ink,
+                      fontFamily: f.headingFont,
+                      fontWeight: f.headingWeight ?? 600,
+                      fontStyle: f.headingStyle ?? "normal",
+                    }}
+                  >
+                    {f.label}
+                  </div>
+                  <div className="text-[11px] mt-0.5 leading-snug" style={{ color: C.muted }}>
+                    {f.description}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {!readOnly && connected && selectedBoardId && (
           <button
             onClick={matchTemplate}

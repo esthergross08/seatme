@@ -2,28 +2,39 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getEventRole } from "@/lib/eventAccess";
 import { getValidAccessToken, listBoardPins, downloadPinImages } from "@/lib/pinterest";
-import { POSTER_TEMPLATES, POSTER_TEMPLATE_IDS } from "@/lib/posterTemplates";
+import { POSTER_LAYOUTS, POSTER_PALETTES, POSTER_FONTS, POSTER_LAYOUT_IDS, POSTER_PALETTE_IDS, POSTER_FONT_IDS } from "@/lib/posterTemplates";
 
 export const runtime = "nodejs";
 
-const templateList = POSTER_TEMPLATES.map((t) => `- "${t.id}" (${t.label}): ${t.description}`).join("\n");
+const layoutList = POSTER_LAYOUTS.map((l) => `- "${l.id}" (${l.label}): ${l.description}`).join("\n");
+const paletteList = POSTER_PALETTES.map((p) => `- "${p.id}" (${p.label}): ${p.description}`).join("\n");
+const fontList = POSTER_FONTS.map((f) => `- "${f.id}" (${f.label}): ${f.description}`).join("\n");
 
-const SYSTEM_PROMPT = `You are a wedding stationery consultant inside SeatMe, an event seating planner. You'll be shown images pinned to the user's own inspiration board. Study the colors and overall style across the images, then pick whichever ONE of these fixed seating-chart poster styles is the closest match — you cannot invent a new style, only choose among these:
+const SYSTEM_PROMPT = `You are a wedding stationery consultant inside SeatMe, an event seating planner. You'll be shown images pinned to the user's own inspiration board. Study the colors, mood, and overall style across the images, then pick the closest-matching combination of layout, color palette, and typography from these fixed sets — you cannot invent new options, only choose among these:
 
-${templateList}
+Layout (structure and ornamentation — pick "flourish" for busy, maximalist, or ornate boards; "clean" for minimal or modern ones):
+${layoutList}
 
-Call the pick_template tool with your choice and a one-sentence reason grounded in what you actually saw in the images (mention colors or style cues, not generic praise).`;
+Color palette (pick based on the dominant colors actually visible in the pins):
+${paletteList}
+
+Typography (pick based on overall mood — romantic, modern, classic):
+${fontList}
+
+Call the pick_style tool with your three choices and a one-sentence reason grounded in what you actually saw in the images (mention colors or style cues, not generic praise).`;
 
 const TOOL = {
-  name: "pick_template",
-  description: "Pick the closest-matching poster template for this board.",
+  name: "pick_style",
+  description: "Pick the closest-matching layout, color palette, and typography for this board.",
   input_schema: {
     type: "object",
     properties: {
-      templateId: { type: "string", enum: POSTER_TEMPLATE_IDS },
-      reason: { type: "string", description: "One short sentence explaining why this style fits the board." },
+      layoutId: { type: "string", enum: POSTER_LAYOUT_IDS },
+      paletteId: { type: "string", enum: POSTER_PALETTE_IDS },
+      fontId: { type: "string", enum: POSTER_FONT_IDS },
+      reason: { type: "string", description: "One short sentence explaining why this combination fits the board." },
     },
-    required: ["templateId", "reason"],
+    required: ["layoutId", "paletteId", "fontId", "reason"],
   },
 };
 
@@ -85,7 +96,7 @@ export async function POST(request: Request) {
         max_tokens: 300,
         system: SYSTEM_PROMPT,
         tools: [TOOL],
-        tool_choice: { type: "tool", name: "pick_template" },
+        tool_choice: { type: "tool", name: "pick_style" },
         messages: [{ role: "user", content }],
       }),
     });
@@ -100,12 +111,21 @@ export async function POST(request: Request) {
 
   const data = await anthropicRes.json();
   const toolBlock = (data.content || []).find((b: { type: string }) => b.type === "tool_use");
-  const templateId = toolBlock?.input?.templateId;
+  const layoutId = toolBlock?.input?.layoutId;
+  const paletteId = toolBlock?.input?.paletteId;
+  const fontId = toolBlock?.input?.fontId;
   const reason = toolBlock?.input?.reason;
 
-  if (!templateId || !POSTER_TEMPLATE_IDS.includes(templateId)) {
+  if (
+    !layoutId ||
+    !POSTER_LAYOUT_IDS.includes(layoutId) ||
+    !paletteId ||
+    !POSTER_PALETTE_IDS.includes(paletteId) ||
+    !fontId ||
+    !POSTER_FONT_IDS.includes(fontId)
+  ) {
     return NextResponse.json({ error: "Couldn't match those pins to a style — try again." }, { status: 502 });
   }
 
-  return NextResponse.json({ templateId, reason: reason || "" });
+  return NextResponse.json({ layoutId, paletteId, fontId, reason: reason || "" });
 }

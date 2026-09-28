@@ -35,7 +35,15 @@ import InviteForm from "./InviteForm";
 import AgentChat from "./AgentChat";
 import DecorPanel from "./DecorPanel";
 import type { AgentOperation, AgentApplyResult } from "@/lib/agentOperations";
-import { getPosterTemplate } from "@/lib/posterTemplates";
+import {
+  getPosterLayout,
+  getPosterPalette,
+  getPosterFont,
+  migrateLegacyPosterTemplate,
+  DEFAULT_POSTER_LAYOUT,
+  DEFAULT_POSTER_PALETTE,
+  DEFAULT_POSTER_FONT,
+} from "@/lib/posterTemplates";
 
 // ---------- palette / tokens ----------
 const C = {
@@ -191,7 +199,10 @@ interface PlannerData {
   floorPlan?: FloorPlan | null;
   fixtures?: Fixture[];
   fixturePositions?: Record<string, { x: number; y: number }>;
-  posterTemplate?: string;
+  posterTemplate?: string; // legacy, pre-split — see migrateLegacyPosterTemplate
+  posterLayout?: string;
+  posterPalette?: string;
+  posterFont?: string;
 }
 
 interface SeatingPlannerProps {
@@ -948,7 +959,19 @@ export default function SeatingPlanner({
   );
   const [dragFixture, setDragFixture] = useState<{ id: string; x: number; y: number } | null>(null);
   const [floorPlan, setFloorPlan] = useState<FloorPlan | null>(initialData?.floorPlan ?? null);
-  const [posterTemplate, setPosterTemplate] = useState<string>(initialData?.posterTemplate ?? "classic");
+  // Layout / color / typography are chosen independently (see lib/posterTemplates.ts).
+  // Fall back through the legacy single-`posterTemplate` field for events saved
+  // before the split, so nobody's prior choice silently resets to the default.
+  const legacyPoster = initialData?.posterTemplate ? migrateLegacyPosterTemplate(initialData.posterTemplate) : null;
+  const [posterLayout, setPosterLayout] = useState<string>(
+    initialData?.posterLayout ?? legacyPoster?.layout ?? DEFAULT_POSTER_LAYOUT
+  );
+  const [posterPalette, setPosterPalette] = useState<string>(
+    initialData?.posterPalette ?? legacyPoster?.palette ?? DEFAULT_POSTER_PALETTE
+  );
+  const [posterFont, setPosterFont] = useState<string>(
+    initialData?.posterFont ?? legacyPoster?.font ?? DEFAULT_POSTER_FONT
+  );
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanError, setFloorPlanError] = useState<string | null>(null);
   const [floorPlanSuggesting, setFloorPlanSuggesting] = useState(false);
@@ -1040,7 +1063,9 @@ export default function SeatingPlanner({
             floorPlan,
             fixtures,
             fixturePositions,
-            posterTemplate,
+            posterLayout,
+            posterPalette,
+            posterFont,
           },
           updated_at: new Date().toISOString(),
         })
@@ -1068,7 +1093,9 @@ export default function SeatingPlanner({
     floorPlan,
     fixtures,
     fixturePositions,
-    posterTemplate,
+    posterLayout,
+    posterPalette,
+    posterFont,
   ]);
 
   const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
@@ -1916,11 +1943,16 @@ export default function SeatingPlanner({
   // listing (like a printed sign for the venue entrance), not a floor-plan
   // diagram. Renders its own hidden DOM (independent of the interactive map
   // canvas, so it works from either Map or Table view) styled per the chosen
-  // curated template, then rasterizes it with html2canvas — same approach the
-  // old floor-plan PDF export used, just pointed at new, purpose-built markup.
+  // layout/palette/font combination, then rasterizes it with html2canvas —
+  // same approach the old floor-plan PDF export used, just pointed at new,
+  // purpose-built markup. Layout (clean vs. flourish) controls structure and
+  // ornamentation; palette and font are pure color/type swaps on top of it —
+  // that separation is what lets the three be picked independently.
   async function exportPosterPdf() {
     setExportingPdf(true);
-    const template = getPosterTemplate(posterTemplate);
+    const layout = getPosterLayout(posterLayout);
+    const palette = getPosterPalette(posterPalette);
+    const font = getPosterFont(posterFont);
     const container = document.createElement("div");
     try {
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas-pro"), import("jspdf")]);
@@ -1946,45 +1978,79 @@ export default function SeatingPlanner({
         .filter(Boolean)
         .join(" · ");
 
+      const flourish = layout.flourish;
+      const headingStyle = `font-family:${font.headingFont}; font-weight:${font.headingWeight ?? 600}; font-style:${font.headingStyle ?? "normal"};`;
+
+      // A small ornamental rule used only in the Flourish layout — plain
+      // horizontal lines everywhere else (the Clean layout).
+      const flourishRule = (color: string) => `
+        <div style="display:flex; align-items:center; justify-content:center; gap:10px; margin:12px 0;">
+          <span style="flex:1; max-width:70px; height:1px; background:${color};"></span>
+          <span style="font-size:15px; color:${color}; line-height:1;">&#10087;</span>
+          <span style="flex:1; max-width:70px; height:1px; background:${color};"></span>
+        </div>
+      `;
+
       container.style.position = "fixed";
       container.style.left = "-99999px";
       container.style.top = "0";
       container.style.width = "900px";
-      container.style.padding = "56px 64px";
-      container.style.backgroundColor = template.background;
-      container.style.fontFamily = template.bodyFont;
+      container.style.padding = flourish ? "40px" : "56px 64px";
+      container.style.backgroundColor = palette.background;
+      container.style.fontFamily = font.bodyFont;
       container.style.boxSizing = "border-box";
 
-      container.innerHTML = `
-        <div style="text-align:center; margin-bottom:40px; padding-bottom:28px; border-bottom: 1px solid ${template.line};">
-          <div style="font-size:11px; letter-spacing:0.25em; text-transform:uppercase; font-weight:600; color:${template.accent}; margin-bottom:10px;">Seating Chart</div>
-          <div style="font-family:${template.headingFont}; font-weight:${template.headingWeight ?? 600}; font-style:${template.headingStyle ?? "normal"}; font-size:44px; color:${template.ink}; line-height:1.15;">${escapeHtml(eventName)}</div>
-          ${dateLocation ? `<div style="font-size:14px; color:${template.muted}; margin-top:10px;">${escapeHtml(dateLocation)}</div>` : ""}
+      const headerBlock = `
+        <div style="text-align:center; margin-bottom:${flourish ? 32 : 40}px; ${
+          flourish ? "" : `padding-bottom:28px; border-bottom: 1px solid ${palette.line};`
+        }">
+          <div style="font-size:11px; letter-spacing:0.25em; text-transform:uppercase; font-weight:600; color:${palette.accent}; margin-bottom:10px;">Seating Chart</div>
+          <div style="${headingStyle} font-size:44px; color:${palette.ink}; line-height:1.15;">${escapeHtml(eventName)}</div>
+          ${dateLocation ? `<div style="font-size:14px; color:${palette.muted}; margin-top:10px;">${escapeHtml(dateLocation)}</div>` : ""}
+          ${flourish ? flourishRule(palette.accent) : ""}
         </div>
+      `;
+
+      const tablesBlock = `
         <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:32px 28px;">
           ${tableBlocks
             .map(
               (b) => `
-            <div>
-              <div style="font-family:${template.headingFont}; font-weight:${template.headingWeight ?? 600}; font-size:16px; letter-spacing:0.04em; text-transform:uppercase; color:${template.accent}; margin-bottom:10px; padding-bottom:6px; border-bottom: 1.5px solid ${template.line};">${escapeHtml(b.label)}</div>
-              <div style="font-size:14px; color:${template.ink}; line-height:1.9;">${b.names.map((n) => escapeHtml(n)).join("<br/>")}</div>
+            <div style="${flourish ? `border: 1px solid ${palette.line}; border-radius:10px; padding:16px 18px;` : ""}">
+              <div style="${headingStyle} font-size:16px; letter-spacing:0.04em; text-transform:${
+                flourish ? "none" : "uppercase"
+              }; color:${palette.accent}; margin-bottom:10px; ${
+                flourish ? "" : `padding-bottom:6px; border-bottom: 1.5px solid ${palette.line};`
+              }">${escapeHtml(b.label)}</div>
+              <div style="font-size:14px; color:${palette.ink}; line-height:1.9;">${b.names.map((n) => escapeHtml(n)).join("<br/>")}</div>
             </div>
           `
             )
             .join("")}
         </div>
-        ${
-          unseated.length > 0
-            ? `<div style="margin-top:40px; padding-top:20px; border-top: 1px solid ${template.line};">
-                <div style="font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:${template.muted}; margin-bottom:8px;">Not yet seated</div>
-                <div style="font-size:13px; color:${template.muted};">${unseated.map((n) => escapeHtml(n)).join(", ")}</div>
-              </div>`
-            : ""
-        }
       `;
 
+      const unseatedBlock =
+        unseated.length > 0
+          ? `<div style="margin-top:${flourish ? 32 : 40}px; padding-top:20px; ${
+              flourish ? "" : `border-top: 1px solid ${palette.line};`
+            }">
+              ${flourish ? flourishRule(palette.line) : ""}
+              <div style="font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:${palette.muted}; margin-bottom:8px; text-align:${flourish ? "center" : "left"};">Not yet seated</div>
+              <div style="font-size:13px; color:${palette.muted}; text-align:${flourish ? "center" : "left"};">${unseated.map((n) => escapeHtml(n)).join(", ")}</div>
+            </div>`
+          : "";
+
+      container.innerHTML = flourish
+        ? `<div style="border: 2px solid ${palette.accent}; border-radius:4px; padding:36px;">
+             <div style="border: 1px solid ${palette.line}; border-radius:2px; padding:28px;">
+               ${headerBlock}${tablesBlock}${unseatedBlock}
+             </div>
+           </div>`
+        : `${headerBlock}${tablesBlock}${unseatedBlock}`;
+
       document.body.appendChild(container);
-      const canvas = await html2canvas(container, { backgroundColor: template.background, scale: 2 });
+      const canvas = await html2canvas(container, { backgroundColor: palette.background, scale: 2 });
       const imgData = canvas.toDataURL("image/png");
       const orientation = canvas.width >= canvas.height ? "landscape" : "portrait";
       const pdf = new jsPDF({ orientation, unit: "pt", format: [canvas.width, canvas.height] });
@@ -4047,8 +4113,12 @@ export default function SeatingPlanner({
           <DecorPanel
             eventId={eventId}
             readOnly={readOnly}
-            posterTemplate={posterTemplate}
-            onPosterTemplateChange={setPosterTemplate}
+            posterLayout={posterLayout}
+            posterPalette={posterPalette}
+            posterFont={posterFont}
+            onPosterLayoutChange={setPosterLayout}
+            onPosterPaletteChange={setPosterPalette}
+            onPosterFontChange={setPosterFont}
           />
         )}
 
