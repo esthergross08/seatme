@@ -4119,6 +4119,9 @@ export default function SeatingPlanner({
             onPosterLayoutChange={setPosterLayout}
             onPosterPaletteChange={setPosterPalette}
             onPosterFontChange={setPosterFont}
+            onExportPoster={exportPosterPdf}
+            exportingPdf={exportingPdf}
+            canExport={tables.length > 0}
           />
         )}
 

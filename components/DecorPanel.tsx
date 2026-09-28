@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Wand2 } from "lucide-react";
+import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Wand2, FileImage } from "lucide-react";
 import { POSTER_LAYOUTS, POSTER_PALETTES, POSTER_FONTS } from "@/lib/posterTemplates";
 
 const C = {
@@ -40,6 +40,9 @@ export interface DecorPanelProps {
   onPosterLayoutChange?: (id: string) => void;
   onPosterPaletteChange?: (id: string) => void;
   onPosterFontChange?: (id: string) => void;
+  onExportPoster?: () => void;
+  exportingPdf?: boolean;
+  canExport?: boolean;
 }
 
 export default function DecorPanel({
@@ -51,6 +54,9 @@ export default function DecorPanel({
   onPosterLayoutChange,
   onPosterPaletteChange,
   onPosterFontChange,
+  onExportPoster,
+  exportingPdf = false,
+  canExport = true,
 }: DecorPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -249,9 +255,23 @@ export default function DecorPanel({
       )}
 
       <div className="mb-6 p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
-        <p className="text-sm mb-1 font-medium" style={{ color: C.ink }}>
-          Seating chart poster style
-        </p>
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <p className="text-sm font-medium" style={{ color: C.ink }}>
+            Seating chart poster style
+          </p>
+          {onExportPoster && (
+            <button
+              onClick={onExportPoster}
+              disabled={exportingPdf || !canExport}
+              title={canExport ? "Download the seating chart as a PDF" : "Add tables and seat guests first"}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0"
+              style={{ backgroundColor: C.gold, color: "#fff" }}
+            >
+              {exportingPdf ? <Loader2 size={13} className="animate-spin" /> : <FileImage size={13} />}
+              {exportingPdf ? "Exporting…" : "Download PDF"}
+            </button>
+          )}
+        </div>
         <p className="text-xs mb-4" style={{ color: C.muted }}>
           Layout, color, and type mix and match — pick each separately.
         </p>
