@@ -25,6 +25,8 @@ import {
   Share2,
   Eye,
   EyeOff,
+  ClipboardCheck,
+  Copy,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -186,6 +188,7 @@ interface SeatingPlannerProps {
   initialEventDate?: string | null;
   initialLocation?: string | null;
   initialMaxCapacity?: number | null;
+  initialRsvpEnabled?: boolean;
 }
 
 // ---------- geometry helpers ----------
@@ -889,6 +892,7 @@ export default function SeatingPlanner({
   initialEventDate,
   initialLocation,
   initialMaxCapacity,
+  initialRsvpEnabled,
 }: SeatingPlannerProps) {
   const readOnly = role === "viewer";
 
@@ -896,6 +900,7 @@ export default function SeatingPlanner({
   const [eventDate, setEventDate] = useState(initialEventDate ?? "");
   const [location, setLocation] = useState(initialLocation ?? "");
   const [maxCapacity, setMaxCapacity] = useState<number | "">(initialMaxCapacity ?? "");
+  const [rsvpEnabled, setRsvpEnabled] = useState(initialRsvpEnabled ?? false);
   const [tab, setTab] = useState("setup");
   const [tableGroups, setTableGroups] = useState<TableGroup[]>(initialData?.tableGroups ?? []);
   const [guests, setGuests] = useState<Guest[]>(initialData?.guests ?? []);
@@ -950,6 +955,8 @@ export default function SeatingPlanner({
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [showImportHelp, setShowImportHelp] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showRsvpPanel, setShowRsvpPanel] = useState(false);
+  const [rsvpLinkCopied, setRsvpLinkCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mapCaptureRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -1004,6 +1011,7 @@ export default function SeatingPlanner({
           event_date: eventDate || null,
           location: location || null,
           max_capacity: maxCapacity === "" ? null : maxCapacity,
+          rsvp_enabled: rsvpEnabled,
           data: {
             tableGroups,
             guests,
@@ -1031,6 +1039,7 @@ export default function SeatingPlanner({
     eventDate,
     location,
     maxCapacity,
+    rsvpEnabled,
     tableGroups,
     guests,
     groups,
@@ -2323,6 +2332,16 @@ export default function SeatingPlanner({
 
             {role === "owner" && (
               <button
+                onClick={() => setShowRsvpPanel((v) => !v)}
+                className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border"
+                style={{ borderColor: C.line, color: C.ink }}
+              >
+                <ClipboardCheck size={12} /> Guest RSVP
+              </button>
+            )}
+
+            {role === "owner" && (
+              <button
                 onClick={() => setShowShare((v) => !v)}
                 className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border"
                 style={{ borderColor: C.line, color: C.ink }}
@@ -2336,6 +2355,68 @@ export default function SeatingPlanner({
         {showShare && role === "owner" && (
           <div className="px-4 sm:px-8 pb-4">
             <InviteForm eventId={eventId} initialMembers={members} />
+          </div>
+        )}
+
+        {showRsvpPanel && role === "owner" && (
+          <div className="px-4 sm:px-8 pb-4">
+            <div className="rounded-xl border p-4 flex flex-col sm:flex-row gap-4" style={{ borderColor: C.line, backgroundColor: C.paper }}>
+              <div className="flex-1 min-w-0">
+                <label className="flex items-center gap-2 text-sm font-medium mb-2 cursor-pointer" style={{ color: C.ink }}>
+                  <input
+                    type="checkbox"
+                    checked={rsvpEnabled}
+                    onChange={(e) => setRsvpEnabled(e.target.checked)}
+                    disabled={readOnly}
+                  />
+                  Accept guest RSVPs online
+                </label>
+                <p className="text-xs mb-3" style={{ color: C.muted }}>
+                  Share this link (or the QR code) with guests. They'll type their own name, confirm attending or not, and add a meal choice or dietary note — no account needed.
+                </p>
+                {rsvpEnabled && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={`${typeof window !== "undefined" ? window.location.origin : ""}/rsvp/${eventId}`}
+                      onFocus={(e) => e.target.select()}
+                      className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border text-xs outline-none"
+                      style={{ borderColor: C.line, backgroundColor: C.card, color: C.muted }}
+                    />
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/rsvp/${eventId}`).then(() => {
+                          setRsvpLinkCopied(true);
+                          setTimeout(() => setRsvpLinkCopied(false), 2000);
+                        });
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg shrink-0"
+                      style={{ backgroundColor: C.gold, color: "#fff" }}
+                    >
+                      <Copy size={12} /> {rsvpLinkCopied ? "Copied!" : "Copy link"}
+                    </button>
+                  </div>
+                )}
+              </div>
+              {rsvpEnabled && typeof window !== "undefined" && (
+                <div className="flex flex-col items-center gap-1 shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(
+                      `${window.location.origin}/rsvp/${eventId}`
+                    )}`}
+                    alt="QR code linking to the guest RSVP form"
+                    width={110}
+                    height={110}
+                    className="rounded-lg border"
+                    style={{ borderColor: C.line }}
+                  />
+                  <span className="text-[10px]" style={{ color: C.muted }}>
+                    Scan to RSVP
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

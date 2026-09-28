@@ -59,7 +59,8 @@ export async function updateSession(request: NextRequest) {
     path.startsWith("/privacy") ||
     path.startsWith("/terms") ||
     path.startsWith("/about") ||
-    path.startsWith("/contact");
+    path.startsWith("/contact") ||
+    path.startsWith("/rsvp");
 
   // API routes handle their own auth (some require a signed-in user, some —
   // like the cron endpoints and the anonymous feedback form — intentionally

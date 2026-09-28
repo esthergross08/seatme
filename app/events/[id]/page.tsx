@@ -44,6 +44,7 @@ export default async function EventPage({
       initialEventDate={event.event_date ?? null}
       initialLocation={event.location ?? null}
       initialMaxCapacity={event.max_capacity ?? null}
+      initialRsvpEnabled={event.rsvp_enabled ?? false}
     />
   );
 }
