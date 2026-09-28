@@ -15,7 +15,7 @@ interface GuestRecord {
 interface EventData {
   guests?: GuestRecord[];
   seatAssignment?: Record<string, string>;
-  rsvpConfig?: { collectDietary?: boolean; collectComments?: boolean; mealOptions?: string[] };
+  rsvpConfig?: { collectComments?: boolean; mealOptions?: string[] };
   [key: string]: unknown;
 }
 

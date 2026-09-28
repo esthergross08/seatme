@@ -189,7 +189,6 @@ interface FloorPlan {
 }
 
 interface RsvpConfig {
-  collectDietary?: boolean;
   collectComments?: boolean;
   mealOptions?: string[];
 }
@@ -1000,10 +999,10 @@ export default function SeatingPlanner({
   const [posterFont, setPosterFont] = useState<string>(
     initialData?.posterFont ?? legacyPoster?.font ?? DEFAULT_POSTER_FONT
   );
-  // RSVP form config — simple attending/not-attending only by default; dietary
-  // and comments are separate opt-in toggles, and a meal question only appears
-  // once the planner has defined at least one option (never freeform).
-  const [collectDietary, setCollectDietary] = useState<boolean>(initialData?.rsvpConfig?.collectDietary ?? false);
+  // RSVP form config — simple attending/not-attending only by default; comments
+  // (which can cover dietary needs too) is a separate opt-in toggle, and a meal
+  // question only appears once the planner has defined at least one option
+  // (never freeform).
   const [collectComments, setCollectComments] = useState<boolean>(initialData?.rsvpConfig?.collectComments ?? false);
   const [mealOptions, setMealOptions] = useState<string[]>(initialData?.rsvpConfig?.mealOptions ?? []);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
@@ -1116,7 +1115,7 @@ export default function SeatingPlanner({
             posterLayout,
             posterPalette,
             posterFont,
-            rsvpConfig: { collectDietary, collectComments, mealOptions },
+            rsvpConfig: { collectComments, mealOptions },
           },
           updated_at: new Date().toISOString(),
         })
@@ -1147,7 +1146,6 @@ export default function SeatingPlanner({
     posterLayout,
     posterPalette,
     posterFont,
-    collectDietary,
     collectComments,
     mealOptions,
   ]);
@@ -2743,16 +2741,7 @@ export default function SeatingPlanner({
                 <p className="text-xs mb-3" style={{ color: C.muted }}>
                   By default guests only confirm attending or not. Turn on anything else you want to collect.
                 </p>
-                <div className="flex flex-col sm:flex-row gap-4 mb-4">
-                  <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: C.ink }}>
-                    <input
-                      type="checkbox"
-                      checked={collectDietary}
-                      onChange={(e) => setCollectDietary(e.target.checked)}
-                      disabled={readOnly}
-                    />
-                    Ask about dietary restrictions
-                  </label>
+                <div className="mb-4">
                   <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: C.ink }}>
                     <input
                       type="checkbox"
@@ -2760,7 +2749,7 @@ export default function SeatingPlanner({
                       onChange={(e) => setCollectComments(e.target.checked)}
                       disabled={readOnly}
                     />
-                    Ask for open comments
+                    Ask for comments (dietary needs, allergies, anything else)
                   </label>
                 </div>
 

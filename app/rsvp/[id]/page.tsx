@@ -25,7 +25,7 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
     event_date: string | null;
     location: string | null;
     rsvp_enabled: boolean;
-    data: { rsvpConfig?: { collectDietary?: boolean; collectComments?: boolean; mealOptions?: string[] } } | null;
+    data: { rsvpConfig?: { collectComments?: boolean; mealOptions?: string[] } } | null;
   } | null = null;
   let configError = false;
 
@@ -77,7 +77,6 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
             <div className="px-8 py-6">
               <RsvpForm
                 eventId={id}
-                collectDietary={rsvpConfig.collectDietary ?? false}
                 collectComments={rsvpConfig.collectComments ?? false}
                 mealOptions={rsvpConfig.mealOptions ?? []}
               />
