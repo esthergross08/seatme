@@ -999,6 +999,18 @@ export default function SeatingPlanner({
   const [floorPlanSuggestion, setFloorPlanSuggestion] = useState<{ tables: TableGroup[]; note: string | null } | null>(null);
   const [guestSearch, setGuestSearch] = useState("");
   const [compactGuestRows, setCompactGuestRows] = useState(false);
+  // Inline "add rule" popover state — only one open at a time, keyed by guest id.
+  const [addRuleForGuestId, setAddRuleForGuestId] = useState<string | null>(null);
+  const [addRuleType, setAddRuleType] = useState<"must" | "cannot">("must");
+  const [addRuleTargetType, setAddRuleTargetType] = useState<"guest" | "group">("guest");
+  const [addRuleTargetId, setAddRuleTargetId] = useState("");
+  // Group-vs-group rules (neither side is a specific person) have their own
+  // small add-form near group management, since they don't belong to any one
+  // guest's row.
+  const [showGroupRuleForm, setShowGroupRuleForm] = useState(false);
+  const [groupRuleType, setGroupRuleType] = useState<"must" | "cannot">("must");
+  const [groupRuleAId, setGroupRuleAId] = useState("");
+  const [groupRuleBId, setGroupRuleBId] = useState("");
   const [rsvpFilter, setRsvpFilter] = useState<"all" | "attending" | "pending" | "declined">("all");
   const [undo, setUndo] = useState<{ message: string; restore: () => void } | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1834,17 +1846,15 @@ export default function SeatingPlanner({
   };
 
   // ---- constraint handlers ----
-  const addConstraint = () => {
-    if (readOnly) return;
-    if (guests.length < 2) return;
-    setConstraints((c) => [
-      ...c,
-      { id: genId(), aType: "guest", aId: guests[0].id, bType: "guest", bId: guests[1].id, type: "must" },
-    ]);
+  // Rules are added directly from a guest's row (their side is always "this
+  // guest"); the other side can still be a whole group, same as before.
+  const addConstraintFor = (guestId: string, type: "must" | "cannot", bType: "guest" | "group", bId: string) => {
+    if (readOnly || !bId) return;
+    setConstraints((c) => [...c, { id: genId(), aType: "guest", aId: guestId, bType, bId, type }]);
   };
-  const updateConstraint = (id: string, patch: Partial<Constraint>) => {
-    if (readOnly) return;
-    setConstraints((c) => c.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const addGroupConstraint = (aId: string, bId: string, type: "must" | "cannot") => {
+    if (readOnly || !aId || !bId || aId === bId) return;
+    setConstraints((c) => [...c, { id: genId(), aType: "group", aId, bType: "group", bId, type }]);
   };
   const removeConstraint = (id: string) => {
     if (readOnly) return;
@@ -2120,6 +2130,14 @@ export default function SeatingPlanner({
       return operations.map((_, index) => ({ index, ok: false, message: "You don't have edit access." }));
     }
 
+    // Snapshot for Undo — the assistant now applies changes immediately (no
+    // propose-then-confirm step), so this is the only safety net.
+    const prevGuests = guests;
+    const prevGroups = groups;
+    const prevTableGroups = tableGroups;
+    const prevConstraints = constraints;
+    const prevSeatAssignment = seatAssignment;
+
     let workingGuests = guests.map((g) => ({ ...g, groupIds: [...g.groupIds] }));
     let workingGroups = groups.map((g) => ({ ...g }));
     let workingTableGroups = tableGroups.map((tg) => ({ ...tg }));
@@ -2394,10 +2412,21 @@ export default function SeatingPlanner({
     setSeatAssignment(workingSeatAssignment);
     setPicked(null);
 
+    const successCount = results.filter((r) => r.ok).length;
+
+    if (successCount > 0) {
+      pushUndo(`Applied ${successCount} AI-suggested change${successCount === 1 ? "" : "s"}.`, () => {
+        setGuests(prevGuests);
+        setGroups(prevGroups);
+        setTableGroups(prevTableGroups);
+        setConstraints(prevConstraints);
+        setSeatAssignment(prevSeatAssignment);
+      });
+    }
+
     // Best-effort usage logging: one row per batch of agent-proposed changes the
     // user actually applied, so "agent vs. manual" usage can be answered later
     // (see admin report). Never let this affect the apply itself.
-    const successCount = results.filter((r) => r.ok).length;
     if (successCount > 0) {
       const successTypes = Array.from(
         new Set(results.filter((r) => r.ok).map((r) => operations[r.index]?.type).filter(Boolean))
@@ -2980,7 +3009,7 @@ export default function SeatingPlanner({
         )}
 
         {tab === "guests" && (
-          <div className="max-w-3xl grid md:grid-cols-2 gap-10">
+          <div className="max-w-2xl">
             <div>
               <SectionTitle eyebrow="Step two" title="Guest list" />
 
@@ -3120,6 +3149,114 @@ export default function SeatingPlanner({
                 <Link2 size={10} className="inline mr-1 -mt-0.5" /> together (default) · <Shuffle size={10} className="inline mr-1 -mt-0.5" /> mixed — click a group's icon to switch. Applied automatically on generate/regenerate.
               </div>
 
+              {groups.length > 1 && (
+                <div className="mb-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: C.muted }}>
+                      Group rules
+                    </div>
+                    {!readOnly && !showGroupRuleForm && (
+                      <button
+                        onClick={() => {
+                          setShowGroupRuleForm(true);
+                          setGroupRuleType("must");
+                          setGroupRuleAId(groups[0]?.id ?? "");
+                          setGroupRuleBId(groups[1]?.id ?? "");
+                        }}
+                        className="inline-flex items-center gap-0.5 text-[10px] font-medium"
+                        style={{ color: C.gold }}
+                      >
+                        <Plus size={10} /> Add
+                      </button>
+                    )}
+                  </div>
+                  {(() => {
+                    const groupConstraints = constraints.filter((c) => c.aType === "group" && c.bType === "group");
+                    if (groupConstraints.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {groupConstraints.map((c) => (
+                          <span
+                            key={c.id}
+                            className="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-1 py-0.5 rounded-full font-medium"
+                            style={{
+                              backgroundColor: c.type === "must" ? "#EEF2EA" : "#F3E4E4",
+                              color: c.type === "must" ? C.sage : C.wine,
+                            }}
+                          >
+                            {sideLabel("group", c.aId)} {c.type === "must" ? "with" : "not with"} {sideLabel("group", c.bId)}
+                            {!readOnly && (
+                              <button
+                                onClick={() => removeConstraintWithUndo(c.id)}
+                                aria-label={`Remove rule: ${sideLabel("group", c.aId)} ${c.type === "must" ? "with" : "not with"} ${sideLabel("group", c.bId)}`}
+                                className="rounded-full hover:opacity-70"
+                              >
+                                <X size={9} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  {showGroupRuleForm && (
+                    <div
+                      className="flex flex-wrap items-center gap-1 mt-1 p-1.5 rounded-lg border"
+                      style={{ borderColor: C.line, backgroundColor: C.card }}
+                    >
+                      <select
+                        value={groupRuleAId}
+                        onChange={(e) => setGroupRuleAId(e.target.value)}
+                        className="text-xs bg-transparent outline-none min-w-0"
+                      >
+                        {groups.map((gr) => (
+                          <option key={gr.id} value={gr.id}>
+                            {gr.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={groupRuleType}
+                        onChange={(e) => setGroupRuleType(e.target.value as "must" | "cannot")}
+                        className="text-[10px] font-semibold rounded-md px-1.5 py-1"
+                        style={{
+                          color: groupRuleType === "must" ? C.sage : C.wine,
+                          backgroundColor: groupRuleType === "must" ? "#EEF2EA" : "#F3E4E4",
+                        }}
+                      >
+                        <option value="must">must sit with</option>
+                        <option value="cannot">cannot sit with</option>
+                      </select>
+                      <select
+                        value={groupRuleBId}
+                        onChange={(e) => setGroupRuleBId(e.target.value)}
+                        className="flex-1 min-w-0 text-xs bg-transparent outline-none"
+                      >
+                        {groups
+                          .filter((gr) => gr.id !== groupRuleAId)
+                          .map((gr) => (
+                            <option key={gr.id} value={gr.id}>
+                              {gr.name}
+                            </option>
+                          ))}
+                      </select>
+                      <IconBtn
+                        title="Add rule"
+                        onClick={() => {
+                          addGroupConstraint(groupRuleAId, groupRuleBId, groupRuleType);
+                          setShowGroupRuleForm(false);
+                        }}
+                      >
+                        <Check size={13} />
+                      </IconBtn>
+                      <IconBtn title="Cancel" onClick={() => setShowGroupRuleForm(false)}>
+                        <X size={13} />
+                      </IconBtn>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {guests.length > 5 && (
                 <div className="mb-2 flex flex-col gap-2">
                   <div className="flex items-center gap-3">
@@ -3224,29 +3361,106 @@ export default function SeatingPlanner({
                         })}
                       </div>
                     )}
-                    {(constraintTagsByGuestId[g.id]?.length ?? 0) > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {constraintTagsByGuestId[g.id].map((t) => (
-                          <span
-                            key={t.constraintId}
-                            className="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-1 py-0.5 rounded-full font-medium"
-                            style={{
-                              backgroundColor: t.type === "must" ? "#EEF2EA" : "#F3E4E4",
-                              color: t.type === "must" ? C.sage : C.wine,
-                            }}
-                          >
-                            {t.type === "must" ? "with" : "not with"} {t.label}
-                            {!readOnly && (
-                              <button
-                                onClick={() => removeConstraintWithUndo(t.constraintId)}
-                                aria-label={`Remove rule: ${t.type === "must" ? "with" : "not with"} ${t.label}`}
-                                className="rounded-full hover:opacity-70"
-                              >
-                                <X size={9} />
-                              </button>
-                            )}
-                          </span>
-                        ))}
+                    {(() => {
+                      const tags = constraintTagsByGuestId[g.id] ?? [];
+                      const otherGuests = guests.filter((x) => x.id !== g.id);
+                      const canAddRule = !readOnly && (otherGuests.length > 0 || groups.length > 0);
+                      if (tags.length === 0 && !canAddRule) return null;
+                      return (
+                        <div className="flex flex-wrap items-center gap-1 mt-1">
+                          {tags.map((t) => (
+                            <span
+                              key={t.constraintId}
+                              className="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-1 py-0.5 rounded-full font-medium"
+                              style={{
+                                backgroundColor: t.type === "must" ? "#EEF2EA" : "#F3E4E4",
+                                color: t.type === "must" ? C.sage : C.wine,
+                              }}
+                            >
+                              {t.type === "must" ? "with" : "not with"} {t.label}
+                              {!readOnly && (
+                                <button
+                                  onClick={() => removeConstraintWithUndo(t.constraintId)}
+                                  aria-label={`Remove rule: ${t.type === "must" ? "with" : "not with"} ${t.label}`}
+                                  className="rounded-full hover:opacity-70"
+                                >
+                                  <X size={9} />
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          {canAddRule && addRuleForGuestId !== g.id && (
+                            <button
+                              onClick={() => {
+                                setAddRuleForGuestId(g.id);
+                                setAddRuleType("must");
+                                const firstTargetType = otherGuests.length > 0 ? "guest" : "group";
+                                setAddRuleTargetType(firstTargetType);
+                                setAddRuleTargetId((firstTargetType === "guest" ? otherGuests[0]?.id : groups[0]?.id) ?? "");
+                              }}
+                              className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border font-medium"
+                              style={{ borderColor: C.gold, color: C.gold }}
+                            >
+                              <Plus size={9} /> Rule
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    {addRuleForGuestId === g.id && (
+                      <div
+                        className="flex flex-wrap items-center gap-1 mt-1 p-1.5 rounded-lg border"
+                        style={{ borderColor: C.line, backgroundColor: C.paper }}
+                      >
+                        <select
+                          value={addRuleType}
+                          onChange={(e) => setAddRuleType(e.target.value as "must" | "cannot")}
+                          className="text-[10px] font-semibold rounded-md px-1.5 py-1"
+                          style={{
+                            color: addRuleType === "must" ? C.sage : C.wine,
+                            backgroundColor: addRuleType === "must" ? "#EEF2EA" : "#F3E4E4",
+                          }}
+                        >
+                          <option value="must">must sit with</option>
+                          <option value="cannot">cannot sit with</option>
+                        </select>
+                        <select
+                          value={addRuleTargetType}
+                          onChange={(e) => {
+                            const newType = e.target.value as "guest" | "group";
+                            setAddRuleTargetType(newType);
+                            const opts = newType === "group" ? groups : guests.filter((x) => x.id !== g.id);
+                            setAddRuleTargetId(opts[0]?.id ?? "");
+                          }}
+                          className="text-[10px] rounded-md px-1 py-1 border"
+                          style={{ borderColor: C.line, color: C.muted }}
+                        >
+                          <option value="guest">Person</option>
+                          <option value="group">Group</option>
+                        </select>
+                        <select
+                          value={addRuleTargetId}
+                          onChange={(e) => setAddRuleTargetId(e.target.value)}
+                          className="flex-1 min-w-0 bg-transparent outline-none text-xs"
+                        >
+                          {(addRuleTargetType === "group" ? groups : guests.filter((x) => x.id !== g.id)).map((o) => (
+                            <option key={o.id} value={o.id}>
+                              {o.name}
+                            </option>
+                          ))}
+                        </select>
+                        <IconBtn
+                          title="Add rule"
+                          onClick={() => {
+                            addConstraintFor(g.id, addRuleType, addRuleTargetType, addRuleTargetId);
+                            setAddRuleForGuestId(null);
+                          }}
+                        >
+                          <Check size={13} />
+                        </IconBtn>
+                        <IconBtn title="Cancel" onClick={() => setAddRuleForGuestId(null)}>
+                          <X size={13} />
+                        </IconBtn>
                       </div>
                     )}
                     {!compactGuestRows && (
@@ -3329,102 +3543,6 @@ export default function SeatingPlanner({
                 </div>
               )}
               </div>
-            </div>
-
-            <div>
-              <SectionTitle eyebrow="Rules" title="Seating constraints" />
-              <div className="space-y-2">
-                {constraints.map((c) => {
-                  const groupInvolved = c.aType === "group" || c.bType === "group";
-                  const sideOptions = (type: "guest" | "group") => (type === "group" ? groups : guests);
-                  return (
-                    <div key={c.id} className="p-2.5 rounded-lg border text-sm space-y-1.5" style={{ borderColor: C.line, backgroundColor: C.card }}>
-                      <div className="flex items-center gap-1.5">
-                        <select
-                          value={c.aType}
-                          disabled={readOnly}
-                          onChange={(e) => {
-                            const newType = e.target.value as "guest" | "group";
-                            const opts = sideOptions(newType);
-                            updateConstraint(c.id, { aType: newType, aId: opts[0]?.id || "" });
-                          }}
-                          className="text-[10px] rounded-md px-1 py-1 border"
-                          style={{ borderColor: C.line, color: C.muted }}
-                        >
-                          <option value="guest">Person</option>
-                          <option value="group">Group</option>
-                        </select>
-                        <select
-                          value={c.aId}
-                          disabled={readOnly}
-                          onChange={(e) => updateConstraint(c.id, { aId: e.target.value })}
-                          className="flex-1 bg-transparent outline-none text-xs min-w-0"
-                        >
-                          {sideOptions(c.aType).map((o) => (
-                            <option key={o.id} value={o.id}>
-                              {"name" in o ? o.name : ""}
-                            </option>
-                          ))}
-                        </select>
-                        <IconBtn danger title="Remove rule" onClick={() => removeConstraintWithUndo(c.id)} disabled={readOnly}>
-                          <X size={14} />
-                        </IconBtn>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <select
-                          value={c.type}
-                          disabled={readOnly}
-                          onChange={(e) => updateConstraint(c.id, { type: e.target.value as "must" | "cannot" })}
-                          className="text-xs font-semibold rounded-md px-1.5 py-1"
-                          style={{
-                            color: c.type === "must" ? C.sage : C.wine,
-                            backgroundColor: c.type === "must" ? "#EEF2EA" : "#F3E4E4",
-                          }}
-                        >
-                          <option value="must">{groupInvolved ? "must sit at same table as" : "must sit next to"}</option>
-                          <option value="cannot">{groupInvolved ? "cannot sit at same table as" : "cannot sit next to"}</option>
-                        </select>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <select
-                          value={c.bType}
-                          disabled={readOnly}
-                          onChange={(e) => {
-                            const newType = e.target.value as "guest" | "group";
-                            const opts = sideOptions(newType);
-                            updateConstraint(c.id, { bType: newType, bId: opts[0]?.id || "" });
-                          }}
-                          className="text-[10px] rounded-md px-1 py-1 border"
-                          style={{ borderColor: C.line, color: C.muted }}
-                        >
-                          <option value="guest">Person</option>
-                          <option value="group">Group</option>
-                        </select>
-                        <select
-                          value={c.bId}
-                          disabled={readOnly}
-                          onChange={(e) => updateConstraint(c.id, { bId: e.target.value })}
-                          className="flex-1 bg-transparent outline-none text-xs min-w-0"
-                        >
-                          {sideOptions(c.bType).map((o) => (
-                            <option key={o.id} value={o.id}>
-                              {"name" in o ? o.name : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <button
-                onClick={addConstraint}
-                disabled={readOnly || guests.length < 2}
-                className="mt-3 flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg disabled:opacity-40"
-                style={{ color: C.gold, border: `1px dashed ${C.gold}` }}
-              >
-                <Plus size={14} /> Add rule
-              </button>
             </div>
           </div>
         )}

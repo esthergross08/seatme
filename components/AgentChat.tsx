@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { MessageCircle, X, Send, Check, Loader2, AlertTriangle } from "lucide-react";
 import { describeOperation, type AgentOperation, type AgentApplyResult } from "@/lib/agentOperations";
 
+// Changes apply the instant the assistant proposes them (no more "Apply" /
+// "Dismiss" step) — SeatingPlanner's own Undo toast (the same one used for
+// every other destructive action) is the safety net if a batch needs undoing.
+
 const C = {
   ink: "#221F2B",
   paper: "#F7F3EA",
@@ -22,7 +26,6 @@ interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   operations?: AgentOperation[];
-  applied?: boolean;
   results?: AgentApplyResult[];
 }
 
@@ -39,7 +42,6 @@ export default function AgentChat({ eventId, role, getState, onApply }: AgentCha
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [applyingId, setApplyingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -65,34 +67,21 @@ export default function AgentChat({ eventId, role, getState, onApply }: AgentCha
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Something went wrong.");
-      setMessages((m) => [
-        ...m,
-        {
-          id: genId(),
-          role: "assistant",
-          text: data.reply,
-          operations: data.operations && data.operations.length ? data.operations : undefined,
-        },
-      ]);
+      const operations: AgentOperation[] | undefined =
+        data.operations && data.operations.length ? data.operations : undefined;
+      const messageId = genId();
+      setMessages((m) => [...m, { id: messageId, role: "assistant", text: data.reply, operations }]);
+      // Apply immediately — no separate confirm step. The Undo toast
+      // (same one used everywhere else in the app) is the way back out.
+      if (operations) {
+        const results = await onApply(operations);
+        setMessages((m) => m.map((msg) => (msg.id === messageId ? { ...msg, results } : msg)));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleApply(messageId: string, operations: AgentOperation[]) {
-    setApplyingId(messageId);
-    try {
-      const results = await onApply(operations);
-      setMessages((m) => m.map((msg) => (msg.id === messageId ? { ...msg, applied: true, results } : msg)));
-    } finally {
-      setApplyingId(null);
-    }
-  }
-
-  function handleDismiss(messageId: string) {
-    setMessages((m) => m.map((msg) => (msg.id === messageId ? { ...msg, applied: true, results: [] } : msg)));
   }
 
   return (
@@ -123,7 +112,7 @@ export default function AgentChat({ eventId, role, getState, onApply }: AgentCha
             {messages.length === 0 && (
               <div className="text-xs" style={{ color: C.muted }}>
                 Ask me to move guests, add or remove people, set constraints, adjust tables, or regenerate the plan —
-                I&apos;ll show you the changes before anything is applied.
+                changes apply right away, and you can always Undo from the toast that appears after.
               </div>
             )}
             {messages.map((m) => (
@@ -145,16 +134,15 @@ export default function AgentChat({ eventId, role, getState, onApply }: AgentCha
                   >
                     {m.operations.map((op, i) => {
                       const result = m.results?.find((r) => r.index === i);
+                      const settled = !!m.results;
                       return (
                         <div key={i} className="flex items-start gap-1.5 text-xs" style={{ color: C.ink }}>
-                          {m.applied ? (
-                            result?.ok === false ? (
-                              <AlertTriangle size={13} color={C.wine} className="mt-0.5 shrink-0" />
-                            ) : (
-                              <Check size={13} color={C.sage} className="mt-0.5 shrink-0" />
-                            )
+                          {!settled ? (
+                            <Loader2 size={13} className="animate-spin mt-0.5 shrink-0" color={C.muted} />
+                          ) : result?.ok === false ? (
+                            <AlertTriangle size={13} color={C.wine} className="mt-0.5 shrink-0" />
                           ) : (
-                            <span className="mt-1.5 w-1 h-1 rounded-full shrink-0" style={{ background: C.gold }} />
+                            <Check size={13} color={C.sage} className="mt-0.5 shrink-0" />
                           )}
                           <span>
                             {describeOperation(op)}
@@ -163,27 +151,6 @@ export default function AgentChat({ eventId, role, getState, onApply }: AgentCha
                         </div>
                       );
                     })}
-                    {!m.applied && (
-                      <div className="flex gap-2 mt-1">
-                        <button
-                          onClick={() => handleApply(m.id, m.operations!)}
-                          disabled={applyingId === m.id}
-                          className="text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5"
-                          style={{ background: C.sage, color: "#fff", opacity: applyingId === m.id ? 0.7 : 1 }}
-                        >
-                          {applyingId === m.id && <Loader2 size={12} className="animate-spin" />}
-                          Apply
-                        </button>
-                        <button
-                          onClick={() => handleDismiss(m.id)}
-                          disabled={applyingId === m.id}
-                          className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-                          style={{ background: "transparent", color: C.muted, border: `1px solid ${C.line}` }}
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
