@@ -126,6 +126,10 @@ interface TableGroup {
   // (a single head, a single foot) to match how every table worked before this existed.
   headCount?: number | "";
   footCount?: number | "";
+  // Purely visual — how much bigger/smaller than the auto-computed size this table
+  // renders, independent of its seat count. 1 = default size. Set by dragging a
+  // table's edge on the map (see beginTableResize below).
+  sizeScale?: number;
 }
 type FixtureType = "danceFloor" | "bar" | "stage";
 interface Fixture {
@@ -245,6 +249,7 @@ interface Table {
   shape: TableShape;
   headCount: number;
   footCount: number;
+  sizeScale: number;
 }
 interface Seat {
   id: string;
@@ -264,6 +269,7 @@ function buildTables(tableGroups: TableGroup[], nameOverrides: Record<string, st
       const override = nameOverrides[id];
       const headCount = Number(g.headCount) > 0 ? Number(g.headCount) : 1;
       const footCount = Number(g.footCount) > 0 ? Number(g.footCount) : 1;
+      const sizeScale = Number(g.sizeScale) > 0 ? Number(g.sizeScale) : 1;
       tables.push({
         id,
         groupId: g.id,
@@ -272,6 +278,7 @@ function buildTables(tableGroups: TableGroup[], nameOverrides: Record<string, st
         shape: g.shape || "round",
         headCount,
         footCount,
+        sizeScale,
       });
     }
   });
@@ -443,7 +450,7 @@ function computeLayout(
     const dims: Record<string, { r: number; w: number; h: number; seatR: number }> = {};
     let maxSeatR = 0;
     tables.forEach((t) => {
-      const r = Math.min(58, 34 + t.capacity * 3.2) * scale;
+      const r = Math.min(58, 34 + t.capacity * 3.2) * scale * t.sizeScale;
       const { w, h } = shapeDims(t.shape, r, minTableTextWidth(t.label));
       const seatR = Math.max(w, h) / 2 + 34;
       dims[t.id] = { r, w, h, seatR };
@@ -1057,7 +1064,7 @@ export default function SeatingPlanner({
   const exportMenuRef = useRef<HTMLDetailsElement>(null);
   const [dragTable, setDragTable] = useState<{ id: string; x: number; y: number } | null>(null);
   const [resizingGroupId, setResizingGroupId] = useState<string | null>(null);
-  const [resizePreviewCapacity, setResizePreviewCapacity] = useState<number | null>(null);
+  const [resizePreviewScale, setResizePreviewScale] = useState<number | null>(null);
   const [pendingImport, setPendingImport] = useState<{
     guests: { name: string; groupNames: string[]; email?: string; rsvpStatus?: RsvpStatus; mealChoice?: string }[];
     groupNames: string[];
@@ -4368,46 +4375,48 @@ export default function SeatingPlanner({
                       beginTableDrag(touch.clientX, touch.clientY);
                     };
 
-                    // Resizing pulls the capacity of the whole table *type* up or down —
-                    // every physical table in this group shares one capacity already
-                    // (set in the Tables tab), so dragging one instance's edge resizes
-                    // them all together rather than creating a one-off size. ~16px of
-                    // horizontal drag per seat felt right at the default map scale;
-                    // doesn't try to live-reflow the whole floor plan mid-drag (every
-                    // other table's auto-placement would jump around), just shows a
-                    // "→ N seats" preview and commits the real layout change on release.
-                    const currentCapacity = t.capacity;
+                    // Resizing changes how big the table *renders*, not its seat count —
+                    // a purely visual dial (t.sizeScale, default 1) independent of
+                    // capacity. Every physical table in this group shares one size
+                    // already, the same way they share one capacity, so dragging one
+                    // instance's edge resizes them all together. Doesn't try to
+                    // live-reflow the whole floor plan mid-drag (every other table's
+                    // auto-placement position depends on the biggest table's footprint,
+                    // so continuous reflow would make already-placed tables jump around)
+                    // — shows a "→ 130%" preview and commits the real layout change,
+                    // once, on release.
+                    const currentSizeScale = t.sizeScale;
                     const beginTableResize = (startClientX: number) => {
-                      const startCapacity = currentCapacity;
+                      const startScale = currentSizeScale;
                       setResizingGroupId(t.groupId);
-                      setResizePreviewCapacity(startCapacity);
+                      setResizePreviewScale(startScale);
                       const compute = (clientX: number) => {
-                        const delta = Math.round((clientX - startClientX) / 16);
-                        return Math.max(1, Math.min(40, startCapacity + delta));
+                        const delta = (clientX - startClientX) / 160;
+                        return Math.round(Math.max(0.5, Math.min(2.5, startScale + delta)) * 100) / 100;
                       };
-                      const onMouseMove = (ev: MouseEvent) => setResizePreviewCapacity(compute(ev.clientX));
+                      const onMouseMove = (ev: MouseEvent) => setResizePreviewScale(compute(ev.clientX));
                       const onMouseUp = (ev: MouseEvent) => {
                         const next = compute(ev.clientX);
-                        if (next !== startCapacity) updateTableGroup(t.groupId, { capacity: next });
+                        if (next !== startScale) updateTableGroup(t.groupId, { sizeScale: next });
                         cleanup();
                       };
                       const onTouchMove = (ev: TouchEvent) => {
                         const touch = ev.touches[0];
                         if (!touch) return;
                         ev.preventDefault();
-                        setResizePreviewCapacity(compute(touch.clientX));
+                        setResizePreviewScale(compute(touch.clientX));
                       };
                       const onTouchEnd = (ev: TouchEvent) => {
                         const touch = ev.changedTouches[0];
                         if (touch) {
                           const next = compute(touch.clientX);
-                          if (next !== startCapacity) updateTableGroup(t.groupId, { capacity: next });
+                          if (next !== startScale) updateTableGroup(t.groupId, { sizeScale: next });
                         }
                         cleanup();
                       };
                       function cleanup() {
                         setResizingGroupId(null);
-                        setResizePreviewCapacity(null);
+                        setResizePreviewScale(null);
                         window.removeEventListener("mousemove", onMouseMove);
                         window.removeEventListener("mouseup", onMouseUp);
                         window.removeEventListener("touchmove", onTouchMove);
@@ -4456,7 +4465,7 @@ export default function SeatingPlanner({
                             className="text-[11px] font-medium leading-tight text-center bg-transparent outline-none w-full"
                             style={{ color: C.muted, fontFamily: "Inter, sans-serif" }}
                           />
-                          {isResizingThis && resizePreviewCapacity != null && (
+                          {isResizingThis && resizePreviewScale != null && (
                             <div
                               className="absolute text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none"
                               style={{
@@ -4467,7 +4476,7 @@ export default function SeatingPlanner({
                                 color: "#fff",
                               }}
                             >
-                              {resizePreviewCapacity} seats
+                              {Math.round(resizePreviewScale * 100)}%
                             </div>
                           )}
                         </div>
