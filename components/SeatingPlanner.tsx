@@ -35,6 +35,7 @@ import InviteForm from "./InviteForm";
 import AgentChat from "./AgentChat";
 import DecorPanel from "./DecorPanel";
 import type { AgentOperation, AgentApplyResult } from "@/lib/agentOperations";
+import { getPosterTemplate } from "@/lib/posterTemplates";
 
 // ---------- palette / tokens ----------
 const C = {
@@ -50,10 +51,23 @@ const C = {
 };
 
 const FONTS = `
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,400;1,600&display=swap');
 `;
 
 const genId = () => Math.random().toString(36).slice(2, 9);
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
+
+// Parse a plain "YYYY-MM-DD" as a local calendar date rather than via `new
+// Date(dateStr)`, which treats it as UTC midnight and can print a day early
+// depending on the viewer's timezone (same fix used on the events dashboard).
+function formatPosterDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return dateStr;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+}
 
 // Compact 1-2 char avatar initials for a guest name — "Jane Doe" -> "JD", "Cher" -> "C".
 function guestInitials(name: string): string {
@@ -177,6 +191,7 @@ interface PlannerData {
   floorPlan?: FloorPlan | null;
   fixtures?: Fixture[];
   fixturePositions?: Record<string, { x: number; y: number }>;
+  posterTemplate?: string;
 }
 
 interface SeatingPlannerProps {
@@ -933,6 +948,7 @@ export default function SeatingPlanner({
   );
   const [dragFixture, setDragFixture] = useState<{ id: string; x: number; y: number } | null>(null);
   const [floorPlan, setFloorPlan] = useState<FloorPlan | null>(initialData?.floorPlan ?? null);
+  const [posterTemplate, setPosterTemplate] = useState<string>(initialData?.posterTemplate ?? "classic");
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanError, setFloorPlanError] = useState<string | null>(null);
   const [floorPlanSuggesting, setFloorPlanSuggesting] = useState(false);
@@ -1024,6 +1040,7 @@ export default function SeatingPlanner({
             floorPlan,
             fixtures,
             fixturePositions,
+            posterTemplate,
           },
           updated_at: new Date().toISOString(),
         })
@@ -1051,6 +1068,7 @@ export default function SeatingPlanner({
     floorPlan,
     fixtures,
     fixturePositions,
+    posterTemplate,
   ]);
 
   const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
@@ -1894,21 +1912,89 @@ export default function SeatingPlanner({
     XLSX.writeFile(wb, `${safeFileName()} - Seating List.xlsx`);
   }
 
-  async function exportPdf() {
-    if (!mapCaptureRef.current) return;
+  // Designed, print-ready seating chart poster — a table-by-table guest
+  // listing (like a printed sign for the venue entrance), not a floor-plan
+  // diagram. Renders its own hidden DOM (independent of the interactive map
+  // canvas, so it works from either Map or Table view) styled per the chosen
+  // curated template, then rasterizes it with html2canvas — same approach the
+  // old floor-plan PDF export used, just pointed at new, purpose-built markup.
+  async function exportPosterPdf() {
     setExportingPdf(true);
+    const template = getPosterTemplate(posterTemplate);
+    const container = document.createElement("div");
     try {
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas-pro"), import("jspdf")]);
-      const canvas = await html2canvas(mapCaptureRef.current, { backgroundColor: "#FCFAF4", scale: 2 });
+
+      const tableBlocks = visibleTables
+        .map((t) => {
+          const names: string[] = [];
+          for (let i = 0; i < t.capacity; i++) {
+            const guestId = seatAssignment[`${t.id}#${i}`];
+            const g = guestId ? guestById[guestId] : null;
+            if (g) names.push(g.name);
+          }
+          return { label: t.label, names };
+        })
+        .filter((b) => b.names.length > 0);
+
+      const seatedIds = new Set(Object.values(seatAssignment).filter(Boolean));
+      const unseated = guests
+        .filter((g) => !seatedIds.has(g.id) && g.rsvpStatus !== "declined")
+        .map((g) => g.name);
+
+      const dateLocation = [eventDate ? formatPosterDate(eventDate) : null, location || null]
+        .filter(Boolean)
+        .join(" · ");
+
+      container.style.position = "fixed";
+      container.style.left = "-99999px";
+      container.style.top = "0";
+      container.style.width = "900px";
+      container.style.padding = "56px 64px";
+      container.style.backgroundColor = template.background;
+      container.style.fontFamily = template.bodyFont;
+      container.style.boxSizing = "border-box";
+
+      container.innerHTML = `
+        <div style="text-align:center; margin-bottom:40px; padding-bottom:28px; border-bottom: 1px solid ${template.line};">
+          <div style="font-size:11px; letter-spacing:0.25em; text-transform:uppercase; font-weight:600; color:${template.accent}; margin-bottom:10px;">Seating Chart</div>
+          <div style="font-family:${template.headingFont}; font-weight:${template.headingWeight ?? 600}; font-style:${template.headingStyle ?? "normal"}; font-size:44px; color:${template.ink}; line-height:1.15;">${escapeHtml(eventName)}</div>
+          ${dateLocation ? `<div style="font-size:14px; color:${template.muted}; margin-top:10px;">${escapeHtml(dateLocation)}</div>` : ""}
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:32px 28px;">
+          ${tableBlocks
+            .map(
+              (b) => `
+            <div>
+              <div style="font-family:${template.headingFont}; font-weight:${template.headingWeight ?? 600}; font-size:16px; letter-spacing:0.04em; text-transform:uppercase; color:${template.accent}; margin-bottom:10px; padding-bottom:6px; border-bottom: 1.5px solid ${template.line};">${escapeHtml(b.label)}</div>
+              <div style="font-size:14px; color:${template.ink}; line-height:1.9;">${b.names.map((n) => escapeHtml(n)).join("<br/>")}</div>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+        ${
+          unseated.length > 0
+            ? `<div style="margin-top:40px; padding-top:20px; border-top: 1px solid ${template.line};">
+                <div style="font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:${template.muted}; margin-bottom:8px;">Not yet seated</div>
+                <div style="font-size:13px; color:${template.muted};">${unseated.map((n) => escapeHtml(n)).join(", ")}</div>
+              </div>`
+            : ""
+        }
+      `;
+
+      document.body.appendChild(container);
+      const canvas = await html2canvas(container, { backgroundColor: template.background, scale: 2 });
       const imgData = canvas.toDataURL("image/png");
       const orientation = canvas.width >= canvas.height ? "landscape" : "portrait";
       const pdf = new jsPDF({ orientation, unit: "pt", format: [canvas.width, canvas.height] });
       pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
-      pdf.save(`${safeFileName()} - Seat Map.pdf`);
+      pdf.save(`${safeFileName()} - Seating Chart.pdf`);
     } catch (e) {
-      console.error("PDF export failed:", e);
-      window.alert(`Couldn't generate the PDF: ${e instanceof Error ? e.message : String(e)}`);
+      console.error("Poster export failed:", e);
+      window.alert(`Couldn't generate the seating chart: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
+      if (container.parentNode) container.parentNode.removeChild(container);
       setExportingPdf(false);
     }
   }
@@ -3292,15 +3378,15 @@ export default function SeatingPlanner({
                     </button>
                     <button
                       onClick={() => {
-                        exportPdf();
+                        exportPosterPdf();
                         exportMenuRef.current?.removeAttribute("open");
                       }}
-                      disabled={tables.length === 0 || exportingPdf || seatingView !== "map"}
-                      title={seatingView !== "map" ? "Switch to Map view to export a PDF" : "Download the seat map as a PDF"}
+                      disabled={tables.length === 0 || exportingPdf}
+                      title="Download a designed, printable seating chart"
                       className="flex items-center gap-1.5 w-full text-left px-3 py-2 text-sm border-t disabled:opacity-40"
                       style={{ color: C.ink, borderColor: C.line }}
                     >
-                      <FileImage size={14} /> {exportingPdf ? "Exporting…" : "PDF (seat map)"}
+                      <FileImage size={14} /> {exportingPdf ? "Exporting…" : "Seating chart poster (PDF)"}
                     </button>
                   </div>
                 </details>
@@ -3957,7 +4043,14 @@ export default function SeatingPlanner({
           </div>
         )}
 
-        {tab === "decor" && <DecorPanel eventId={eventId} readOnly={readOnly} />}
+        {tab === "decor" && (
+          <DecorPanel
+            eventId={eventId}
+            readOnly={readOnly}
+            posterTemplate={posterTemplate}
+            onPosterTemplateChange={setPosterTemplate}
+          />
+        )}
 
         {(prevPane || nextPane) && (
           <div className="flex items-center justify-between gap-3 mt-10 pt-6 border-t" style={{ borderColor: C.line }}>

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw } from "lucide-react";
+import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Wand2 } from "lucide-react";
+import { POSTER_TEMPLATES } from "@/lib/posterTemplates";
 
 const C = {
   ink: "#221F2B",
@@ -33,9 +34,11 @@ interface Pin {
 export interface DecorPanelProps {
   eventId: string;
   readOnly: boolean;
+  posterTemplate?: string;
+  onPosterTemplateChange?: (id: string) => void;
 }
 
-export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
+export default function DecorPanel({ eventId, readOnly, posterTemplate = "classic", onPosterTemplateChange }: DecorPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -48,6 +51,8 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchReason, setMatchReason] = useState<string | null>(null);
 
   async function loadBoards() {
     setLoading(true);
@@ -173,6 +178,27 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
     }
   }
 
+  async function matchTemplate() {
+    setMatchLoading(true);
+    setError(null);
+    setMatchReason(null);
+    try {
+      const res = await fetch("/api/pinterest/suggest-template", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Couldn't match a style.");
+      onPosterTemplateChange?.(data.templateId);
+      setMatchReason(data.reason || null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't match a style.");
+    } finally {
+      setMatchLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="max-w-2xl flex items-center gap-2 text-sm" style={{ color: C.muted }}>
@@ -206,6 +232,57 @@ export default function DecorPanel({ eventId, readOnly }: DecorPanelProps) {
           <AlertTriangle size={14} /> {error}
         </div>
       )}
+
+      <div className="mb-6 p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
+        <p className="text-sm mb-3 font-medium" style={{ color: C.ink }}>
+          Seating chart poster style
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+          {POSTER_TEMPLATES.map((t) => {
+            const active = posterTemplate === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => onPosterTemplateChange?.(t.id)}
+                disabled={readOnly}
+                className="text-left rounded-lg border p-2.5 disabled:opacity-40"
+                style={{
+                  borderColor: active ? t.accent : C.line,
+                  borderWidth: active ? 2 : 1,
+                  backgroundColor: t.background,
+                }}
+              >
+                <div
+                  className="h-8 rounded mb-2"
+                  style={{ backgroundColor: t.accent, border: `1px solid ${t.line}` }}
+                />
+                <div className="text-xs font-semibold" style={{ color: t.ink, fontFamily: t.headingFont }}>
+                  {t.label}
+                </div>
+                <div className="text-[11px] mt-0.5 leading-snug" style={{ color: t.muted }}>
+                  {t.description}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        {!readOnly && connected && selectedBoardId && (
+          <button
+            onClick={matchTemplate}
+            disabled={matchLoading || pins.length === 0}
+            className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg disabled:opacity-40"
+            style={{ backgroundColor: C.gold, color: "#fff" }}
+          >
+            {matchLoading ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />}
+            {matchLoading ? "Matching…" : "Match my board"}
+          </button>
+        )}
+        {matchReason && (
+          <p className="mt-3 text-xs leading-relaxed" style={{ color: C.muted }}>
+            {matchReason}
+          </p>
+        )}
+      </div>
 
       {!connected && (
         <div className="p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
