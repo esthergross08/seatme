@@ -25,7 +25,13 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
     event_date: string | null;
     location: string | null;
     rsvp_enabled: boolean;
-    data: { rsvpConfig?: { collectComments?: boolean; mealOptions?: string[] } } | null;
+    data: {
+      rsvpConfig?: {
+        collectComments?: boolean;
+        courses?: { id: string; name: string; options: string[] }[];
+        mealOptions?: string[]; // legacy, pre-courses
+      };
+    } | null;
   } | null = null;
   let configError = false;
 
@@ -42,6 +48,9 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
   }
 
   const rsvpConfig = event?.data?.rsvpConfig ?? {};
+  const courses =
+    rsvpConfig.courses ??
+    (rsvpConfig.mealOptions?.length ? [{ id: "legacy-meal", name: "Meal", options: rsvpConfig.mealOptions }] : []);
 
   const notAvailable = configError || !event || !event.rsvp_enabled;
 
@@ -78,7 +87,7 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
               <RsvpForm
                 eventId={id}
                 collectComments={rsvpConfig.collectComments ?? false}
-                mealOptions={rsvpConfig.mealOptions ?? []}
+                courses={courses}
               />
             </div>
           </div>

@@ -6,12 +6,12 @@ import { getEventRole } from "@/lib/eventAccess";
 
 export const runtime = "nodejs";
 
-const SYSTEM_PROMPT = `You are a menu analyst inside SeatMe, an event seating planner. You'll be shown a caterer's menu document (a PDF, Word doc, or spreadsheet). Pull out the distinct dish/meal options guests would choose between when RSVPing — e.g. "Herb-Roasted Chicken", "Grilled Salmon", "Vegetarian Risotto", "Kids: Chicken Tenders". Use short, guest-facing names only (a few words each) — no prices, ingredient lists, descriptions, or section headers like "Entrees" or "Appetizers" on their own. Dedupe near-identical entries. Cap it at the most relevant 15 options.
+const SYSTEM_PROMPT = `You are a menu analyst inside SeatMe, an event seating planner. You'll be shown a caterer's menu document (a PDF, Word doc, or spreadsheet). Group the distinct dish options guests would choose between when RSVPing into courses — e.g. Starter, Main, Dessert, Kids Menu — following whatever section structure the document itself uses (its own headers like "Entrees" or "Passed Appetizers" are exactly the course names to use). If the document has no clear course structure, put everything under a single course named "Meal". Use short, guest-facing dish names only (a few words each, e.g. "Herb-Roasted Chicken", "Grilled Salmon", "Vegetarian Risotto") — no prices, ingredient lists, or long descriptions. Dedupe near-identical entries within a course. Cap it at the most relevant 6 courses and 15 options per course.
 
 Respond with ONLY strict JSON, no markdown code fences, no other text, in exactly this shape:
-{"options":["Herb-Roasted Chicken","Grilled Salmon"],"note":"one short sentence about what you found or any uncertainty"}
+{"courses":[{"name":"Starter","options":["Soup","Salad"]},{"name":"Main","options":["Herb-Roasted Chicken","Grilled Salmon"]}],"note":"one short sentence about what you found or any uncertainty"}
 
-If the document doesn't look like a menu at all, or you can't find distinct dish options, return {"options":[],"note":"a short honest sentence explaining why"}.`;
+If the document doesn't look like a menu at all, or you can't find distinct dish options, return {"courses":[],"note":"a short honest sentence explaining why"}.`;
 
 export async function POST(request: Request) {
   let body: { eventId?: string; path?: string };
@@ -131,7 +131,7 @@ export async function POST(request: Request) {
     .join("\n")
     .trim();
 
-  let parsed: { options?: unknown[]; note?: string };
+  let parsed: { courses?: unknown[]; note?: string };
   try {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
     parsed = JSON.parse(cleaned);
@@ -139,18 +139,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Couldn't make sense of the AI's response. Try again." }, { status: 502 });
   }
 
-  const seen = new Set<string>();
-  const options = (Array.isArray(parsed.options) ? parsed.options : [])
-    .map((o) => (typeof o === "string" ? o.trim().slice(0, 60) : ""))
-    .filter((o) => {
-      if (!o || seen.has(o.toLowerCase())) return false;
-      seen.add(o.toLowerCase());
-      return true;
+  const courses = (Array.isArray(parsed.courses) ? parsed.courses : [])
+    .map((c) => {
+      const row = c as { name?: unknown; options?: unknown[] };
+      const name = typeof row.name === "string" ? row.name.trim().slice(0, 40) : "";
+      const seen = new Set<string>();
+      const options = (Array.isArray(row.options) ? row.options : [])
+        .map((o) => (typeof o === "string" ? o.trim().slice(0, 60) : ""))
+        .filter((o) => {
+          if (!o || seen.has(o.toLowerCase())) return false;
+          seen.add(o.toLowerCase());
+          return true;
+        })
+        .slice(0, 15);
+      return { name, options };
     })
-    .slice(0, 15);
+    .filter((c) => c.name && c.options.length > 0)
+    .slice(0, 6);
 
   return NextResponse.json({
-    options,
+    courses,
     note: typeof parsed.note === "string" ? parsed.note : null,
   });
 }

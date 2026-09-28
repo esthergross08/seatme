@@ -15,14 +15,20 @@ const C = {
 
 type Step = "name" | "details" | "done";
 
+interface MenuCourse {
+  id: string;
+  name: string;
+  options: string[];
+}
+
 export default function RsvpForm({
   eventId,
   collectComments,
-  mealOptions,
+  courses,
 }: {
   eventId: string;
   collectComments: boolean;
-  mealOptions: string[];
+  courses: MenuCourse[];
 }) {
   const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");
@@ -32,8 +38,10 @@ export default function RsvpForm({
   const [guestId, setGuestId] = useState<string | null>(null);
   const [guestName, setGuestName] = useState("");
   const [attending, setAttending] = useState<"attending" | "declined" | null>(null);
-  const [mealChoice, setMealChoice] = useState("");
+  const [mealChoices, setMealChoices] = useState<Record<string, string>>({});
   const [comments, setComments] = useState("");
+
+  const coursesWithOptions = courses.filter((c) => c.options.length > 0);
 
   async function handleLookup(e: React.FormEvent) {
     e.preventDefault();
@@ -54,7 +62,12 @@ export default function RsvpForm({
       setGuestId(json.guestId);
       setGuestName(json.name);
       setAttending(json.rsvpStatus === "declined" ? "declined" : json.rsvpStatus === "attending" ? "attending" : null);
-      setMealChoice(mealOptions.includes(json.mealChoice) ? json.mealChoice : "");
+      const prevChoices: Record<string, string> = json.mealChoices || {};
+      const validChoices: Record<string, string> = {};
+      for (const c of coursesWithOptions) {
+        if (prevChoices[c.id] && c.options.includes(prevChoices[c.id])) validChoices[c.id] = prevChoices[c.id];
+      }
+      setMealChoices(validChoices);
       setComments(json.note || "");
       setStep("details");
     } catch {
@@ -74,7 +87,7 @@ export default function RsvpForm({
       const res = await fetch(`/api/rsvp/${eventId}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "submit", guestId, rsvpStatus: attending, mealChoice, note }),
+        body: JSON.stringify({ action: "submit", guestId, rsvpStatus: attending, mealChoices, note }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -151,26 +164,26 @@ export default function RsvpForm({
 
         {attending === "attending" && (
           <>
-            {mealOptions.length > 0 && (
-              <label className="text-sm">
+            {coursesWithOptions.map((c) => (
+              <label key={c.id} className="text-sm">
                 <span className="block mb-1 font-medium" style={{ color: C.ink }}>
-                  Meal choice
+                  {c.name}
                 </span>
                 <select
-                  value={mealChoice}
-                  onChange={(e) => setMealChoice(e.target.value)}
+                  value={mealChoices[c.id] ?? ""}
+                  onChange={(e) => setMealChoices((prev) => ({ ...prev, [c.id]: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg border text-sm outline-none bg-white"
                   style={{ borderColor: C.line, color: C.ink }}
                 >
                   <option value="">Select…</option>
-                  {mealOptions.map((opt) => (
+                  {c.options.map((opt) => (
                     <option key={opt} value={opt}>
                       {opt}
                     </option>
                   ))}
                 </select>
               </label>
-            )}
+            ))}
             {collectComments && (
               <label className="text-sm">
                 <span className="block mb-1 font-medium" style={{ color: C.ink }}>

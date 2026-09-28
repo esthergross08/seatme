@@ -3,20 +3,35 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
+interface MenuCourse {
+  id: string;
+  name: string;
+  options: string[];
+}
+
 interface GuestRecord {
   id: string;
   name: string;
   note?: string;
   rsvpStatus?: "attending" | "pending" | "declined";
   mealChoice?: string;
+  mealChoices?: Record<string, string>;
   [key: string]: unknown;
 }
 
 interface EventData {
   guests?: GuestRecord[];
   seatAssignment?: Record<string, string>;
-  rsvpConfig?: { collectComments?: boolean; mealOptions?: string[] };
+  rsvpConfig?: { collectComments?: boolean; courses?: MenuCourse[]; mealOptions?: string[] };
   [key: string]: unknown;
+}
+
+// Old events (pre-courses) may still have a flat `mealOptions` list instead of
+// `courses` — treat that as a single "Meal" course rather than dropping it.
+function resolveCourses(rsvpConfig: EventData["rsvpConfig"]): MenuCourse[] {
+  if (rsvpConfig?.courses?.length) return rsvpConfig.courses;
+  if (rsvpConfig?.mealOptions?.length) return [{ id: "legacy-meal", name: "Meal", options: rsvpConfig.mealOptions }];
+  return [];
 }
 
 function normalizeName(s: string) {
@@ -26,7 +41,14 @@ function normalizeName(s: string) {
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id: eventId } = await context.params;
 
-  let body: { action?: string; name?: string; guestId?: string; rsvpStatus?: string; mealChoice?: string; note?: string };
+  let body: {
+    action?: string;
+    name?: string;
+    guestId?: string;
+    rsvpStatus?: string;
+    mealChoices?: Record<string, string>;
+    note?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -88,7 +110,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       guestId: g.id,
       name: g.name,
       rsvpStatus: g.rsvpStatus ?? "pending",
-      mealChoice: g.mealChoice ?? "",
+      mealChoices: g.mealChoices ?? {},
       note: g.note ?? "",
     });
   }
@@ -96,22 +118,36 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (body.action === "submit") {
     const guestId = typeof body.guestId === "string" ? body.guestId : "";
     const rsvpStatus = body.rsvpStatus;
-    let mealChoice = typeof body.mealChoice === "string" ? body.mealChoice.trim() : "";
+    const submittedChoices = body.mealChoices && typeof body.mealChoices === "object" ? body.mealChoices : {};
     const note = typeof body.note === "string" ? body.note.trim() : "";
 
     if (rsvpStatus !== "attending" && rsvpStatus !== "declined") {
       return NextResponse.json({ error: "Please choose whether you're attending." }, { status: 400 });
     }
 
-    // The planner defines the exact menu — guests pick from that list, never free
-    // text. Enforce it here too, since this endpoint is public and unauthenticated
-    // and the client-side <select> alone wouldn't stop a direct API call.
-    const configuredMealOptions = data.rsvpConfig?.mealOptions ?? [];
-    if (configuredMealOptions.length === 0) {
-      mealChoice = "";
-    } else if (mealChoice && !configuredMealOptions.includes(mealChoice)) {
-      return NextResponse.json({ error: "That meal choice isn't one of the options offered. Please pick from the list." }, { status: 400 });
+    // The planner defines the exact menu, course by course — guests pick from
+    // those lists, never free text. Enforce it here too, since this endpoint is
+    // public and unauthenticated and the client-side <select>s alone wouldn't
+    // stop a direct API call. A course id the guest submitted that no longer
+    // exists (planner removed it) is just dropped, not an error.
+    const courses = resolveCourses(data.rsvpConfig);
+    const mealChoices: Record<string, string> = {};
+    for (const course of courses) {
+      const choice = typeof submittedChoices[course.id] === "string" ? submittedChoices[course.id].trim() : "";
+      if (!choice) continue;
+      if (!course.options.includes(choice)) {
+        return NextResponse.json(
+          { error: `That "${course.name}" choice isn't one of the options offered. Please pick from the list.` },
+          { status: 400 }
+        );
+      }
+      mealChoices[course.id] = choice;
     }
+    const mealChoice = courses
+      .filter((c) => mealChoices[c.id])
+      .map((c) => `${c.name}: ${mealChoices[c.id]}`)
+      .join(", ");
+
     const idx = guests.findIndex((g) => g.id === guestId);
     if (idx === -1) {
       return NextResponse.json({ error: "We couldn't find your invitation — try looking yourself up again." }, { status: 404 });
@@ -122,6 +158,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       ...updatedGuests[idx],
       rsvpStatus,
       mealChoice: mealChoice || undefined,
+      mealChoices: Object.keys(mealChoices).length > 0 ? mealChoices : undefined,
       note: note || undefined,
     };
 

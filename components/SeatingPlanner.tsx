@@ -155,6 +155,11 @@ interface Guest {
   email?: string;
   rsvpStatus?: RsvpStatus;
   mealChoice?: string;
+  // Per-course selections from a structured guest RSVP submission (course id ->
+  // chosen option), when the event's RSVP form has courses configured. `mealChoice`
+  // above stays the single combined display string derived from this on submit —
+  // this is the authoritative source for re-populating the RSVP form on edit.
+  mealChoices?: Record<string, string>;
 }
 type GroupSeatingMode = "together" | "mixed";
 interface Group {
@@ -188,9 +193,16 @@ interface FloorPlan {
   name: string;
 }
 
+interface MenuCourse {
+  id: string;
+  name: string;
+  options: string[];
+}
+
 interface RsvpConfig {
   collectComments?: boolean;
-  mealOptions?: string[];
+  courses?: MenuCourse[];
+  mealOptions?: string[]; // legacy, pre-courses — see the courses state init below
 }
 
 interface PlannerData {
@@ -1004,11 +1016,20 @@ export default function SeatingPlanner({
     initialData?.posterFont ?? legacyPoster?.font ?? DEFAULT_POSTER_FONT
   );
   // RSVP form config — simple attending/not-attending only by default; comments
-  // (which can cover dietary needs too) is a separate opt-in toggle, and a meal
-  // question only appears once the planner has defined at least one option
-  // (never freeform).
+  // (which can cover dietary needs too) is a separate opt-in toggle, and the menu
+  // is built course by course (Starter, Main, Dessert, etc.) — a guest picks one
+  // option per course the planner has defined; a course with no options yet just
+  // doesn't show up on the guest form. Falls back to the old flat `mealOptions`
+  // list (pre-courses) as a single "Meal" course, so nobody's existing setup
+  // silently disappears.
   const [collectComments, setCollectComments] = useState<boolean>(initialData?.rsvpConfig?.collectComments ?? false);
-  const [mealOptions, setMealOptions] = useState<string[]>(initialData?.rsvpConfig?.mealOptions ?? []);
+  const [courses, setCourses] = useState<MenuCourse[]>(
+    initialData?.rsvpConfig?.courses ??
+      (initialData?.rsvpConfig?.mealOptions?.length
+        ? [{ id: genId(), name: "Meal", options: initialData.rsvpConfig.mealOptions }]
+        : [])
+  );
+  const [newCourseOption, setNewCourseOption] = useState<Record<string, string>>({});
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanError, setFloorPlanError] = useState<string | null>(null);
   const [floorPlanSuggesting, setFloorPlanSuggesting] = useState(false);
@@ -1016,7 +1037,6 @@ export default function SeatingPlanner({
   const [menuUploading, setMenuUploading] = useState(false);
   const [menuError, setMenuError] = useState<string | null>(null);
   const [menuNote, setMenuNote] = useState<string | null>(null);
-  const [newMealOption, setNewMealOption] = useState("");
   const [guestSearch, setGuestSearch] = useState("");
   const [compactGuestRows, setCompactGuestRows] = useState(false);
   // Inline "add rule" popover state — only one open at a time, keyed by guest id.
@@ -1119,7 +1139,7 @@ export default function SeatingPlanner({
             posterLayout,
             posterPalette,
             posterFont,
-            rsvpConfig: { collectComments, mealOptions },
+            rsvpConfig: { collectComments, courses },
           },
           updated_at: new Date().toISOString(),
         })
@@ -1151,7 +1171,7 @@ export default function SeatingPlanner({
     posterPalette,
     posterFont,
     collectComments,
-    mealOptions,
+    courses,
   ]);
 
   const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
@@ -1707,9 +1727,11 @@ export default function SeatingPlanner({
   const MENU_MAX_BYTES = 20 * 1024 * 1024;
   const MENU_ALLOWED_EXT = new Set(["pdf", "docx", "xlsx", "xls", "csv"]);
 
-  // Uploads a caterer's menu doc, has Claude pull the distinct dish options out of
-  // it, and merges those into the planner-defined mealOptions list — the file
-  // itself is only a means to that list, so it's deleted from storage right after.
+  // Uploads a caterer's menu doc, has Claude group the dishes into courses (Starter,
+  // Main, Dessert, etc.) and merges those into the planner's course list — matching
+  // an existing course by name (case-insensitively) adds to its options instead of
+  // creating a duplicate. The file itself is only a means to that list, so it's
+  // deleted from storage right after.
   async function handleMenuUpload(file: File) {
     if (readOnly) return;
     setMenuError(null);
@@ -1745,23 +1767,36 @@ export default function SeatingPlanner({
         setMenuError(json.error || "Couldn't read that menu file.");
         return;
       }
-      const found: string[] = json.options || [];
-      if (found.length === 0) {
+      const found: { name: string; options: string[] }[] = json.courses || [];
+      const totalOptions = found.reduce((n, c) => n + c.options.length, 0);
+      if (found.length === 0 || totalOptions === 0) {
         setMenuError(json.note || "Couldn't find any menu options in that file.");
         return;
       }
-      setMealOptions((prev) => {
-        const seen = new Set(prev.map((o) => o.toLowerCase()));
-        const merged = [...prev];
-        for (const o of found) {
-          if (!seen.has(o.toLowerCase())) {
-            seen.add(o.toLowerCase());
-            merged.push(o);
+      setCourses((prev) => {
+        const next = [...prev];
+        for (const ec of found) {
+          const idx = next.findIndex((c) => c.name.trim().toLowerCase() === ec.name.trim().toLowerCase());
+          if (idx >= 0) {
+            const seen = new Set(next[idx].options.map((o) => o.toLowerCase()));
+            const merged = [...next[idx].options];
+            for (const o of ec.options) {
+              if (!seen.has(o.toLowerCase())) {
+                seen.add(o.toLowerCase());
+                merged.push(o);
+              }
+            }
+            next[idx] = { ...next[idx], options: merged };
+          } else {
+            next.push({ id: genId(), name: ec.name, options: ec.options });
           }
         }
-        return merged;
+        return next;
       });
-      setMenuNote(json.note || `Added ${found.length} option${found.length === 1 ? "" : "s"} from ${file.name}.`);
+      setMenuNote(
+        json.note ||
+          `Added ${totalOptions} option${totalOptions === 1 ? "" : "s"} across ${found.length} course${found.length === 1 ? "" : "s"} from ${file.name}.`
+      );
     } catch {
       setMenuError("Couldn't reach the AI service. Try again in a moment.");
     } finally {
@@ -2762,64 +2797,124 @@ export default function SeatingPlanner({
                 </div>
 
                 <div className="text-sm font-medium mb-1" style={{ color: C.ink }}>
-                  Meal options
+                  Menu
                 </div>
                 <p className="text-xs mb-3" style={{ color: C.muted }}>
-                  Define the exact choices guests can pick from — they can't type in their own. Leave this empty to skip the meal question entirely.
+                  Build the menu course by course — guests pick one option per course you define, never freeform text. A course with no options yet just won't show up on the guest form.
                 </p>
 
-                {mealOptions.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {mealOptions.map((opt, i) => (
-                      <span
-                        key={`${opt}-${i}`}
-                        className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border"
-                        style={{ borderColor: C.line, backgroundColor: C.card, color: C.ink }}
-                      >
-                        {opt}
-                        {!readOnly && (
-                          <button
-                            onClick={() => setMealOptions((prev) => prev.filter((_, idx) => idx !== i))}
-                            aria-label={`Remove ${opt}`}
-                            style={{ color: C.muted }}
-                          >
-                            <X size={12} />
-                          </button>
+                {courses.length > 0 && (
+                  <div className="flex flex-col gap-3 mb-3">
+                    {courses.map((course) => (
+                      <div key={course.id} className="rounded-lg border p-3" style={{ borderColor: C.line, backgroundColor: C.card }}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <input
+                            value={course.name}
+                            onChange={(e) =>
+                              setCourses((prev) => prev.map((c) => (c.id === course.id ? { ...c, name: e.target.value } : c)))
+                            }
+                            disabled={readOnly}
+                            placeholder="Course name — e.g. Starter, Main, Dessert"
+                            className="flex-1 min-w-0 text-sm font-medium outline-none bg-transparent"
+                            style={{ color: C.ink }}
+                          />
+                          {!readOnly && (
+                            <button
+                              onClick={() => {
+                                setCourses((prev) => prev.filter((c) => c.id !== course.id));
+                                setNewCourseOption((prev) => {
+                                  const next = { ...prev };
+                                  delete next[course.id];
+                                  return next;
+                                });
+                              }}
+                              aria-label={`Remove ${course.name || "course"}`}
+                              className="shrink-0"
+                              style={{ color: C.muted }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+
+                        {course.options.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {course.options.map((opt, i) => (
+                              <span
+                                key={`${opt}-${i}`}
+                                className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border"
+                                style={{ borderColor: C.line, backgroundColor: C.paper, color: C.ink }}
+                              >
+                                {opt}
+                                {!readOnly && (
+                                  <button
+                                    onClick={() =>
+                                      setCourses((prev) =>
+                                        prev.map((c) =>
+                                          c.id === course.id ? { ...c, options: c.options.filter((_, idx) => idx !== i) } : c
+                                        )
+                                      )
+                                    }
+                                    aria-label={`Remove ${opt}`}
+                                    style={{ color: C.muted }}
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                )}
+                              </span>
+                            ))}
+                          </div>
                         )}
-                      </span>
+
+                        {!readOnly && (
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={newCourseOption[course.id] ?? ""}
+                              onChange={(e) => setNewCourseOption((prev) => ({ ...prev, [course.id]: e.target.value }))}
+                              onKeyDown={(e) => {
+                                const text = (newCourseOption[course.id] ?? "").trim();
+                                if (e.key === "Enter" && text) {
+                                  e.preventDefault();
+                                  setCourses((prev) =>
+                                    prev.map((c) => (c.id === course.id ? { ...c, options: [...c.options, text] } : c))
+                                  );
+                                  setNewCourseOption((prev) => ({ ...prev, [course.id]: "" }));
+                                }
+                              }}
+                              placeholder="e.g. Herb-Roasted Chicken"
+                              className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border text-sm outline-none"
+                              style={{ borderColor: C.line, backgroundColor: C.paper, color: C.ink }}
+                            />
+                            <button
+                              onClick={() => {
+                                const text = (newCourseOption[course.id] ?? "").trim();
+                                if (!text) return;
+                                setCourses((prev) =>
+                                  prev.map((c) => (c.id === course.id ? { ...c, options: [...c.options, text] } : c))
+                                );
+                                setNewCourseOption((prev) => ({ ...prev, [course.id]: "" }));
+                              }}
+                              className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg shrink-0"
+                              style={{ backgroundColor: C.gold, color: "#fff" }}
+                            >
+                              <Plus size={12} /> Add
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}
 
                 {!readOnly && (
                   <>
-                    <div className="flex items-center gap-2 mb-3">
-                      <input
-                        value={newMealOption}
-                        onChange={(e) => setNewMealOption(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && newMealOption.trim()) {
-                            e.preventDefault();
-                            setMealOptions((prev) => [...prev, newMealOption.trim()]);
-                            setNewMealOption("");
-                          }
-                        }}
-                        placeholder="e.g. Herb-Roasted Chicken"
-                        className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border text-sm outline-none"
-                        style={{ borderColor: C.line, backgroundColor: C.card, color: C.ink }}
-                      />
-                      <button
-                        onClick={() => {
-                          if (!newMealOption.trim()) return;
-                          setMealOptions((prev) => [...prev, newMealOption.trim()]);
-                          setNewMealOption("");
-                        }}
-                        className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg shrink-0"
-                        style={{ backgroundColor: C.gold, color: "#fff" }}
-                      >
-                        <Plus size={12} /> Add
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => setCourses((prev) => [...prev, { id: genId(), name: "", options: [] }])}
+                      className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border mb-3"
+                      style={{ borderColor: C.line, color: C.ink }}
+                    >
+                      <Plus size={12} /> Add a course
+                    </button>
 
                     <label
                       className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer"
