@@ -188,6 +188,12 @@ interface FloorPlan {
   name: string;
 }
 
+interface RsvpConfig {
+  collectDietary?: boolean;
+  collectComments?: boolean;
+  mealOptions?: string[];
+}
+
 interface PlannerData {
   tableGroups?: TableGroup[];
   guests?: Guest[];
@@ -204,6 +210,7 @@ interface PlannerData {
   posterLayout?: string;
   posterPalette?: string;
   posterFont?: string;
+  rsvpConfig?: RsvpConfig;
 }
 
 interface SeatingPlannerProps {
@@ -993,10 +1000,20 @@ export default function SeatingPlanner({
   const [posterFont, setPosterFont] = useState<string>(
     initialData?.posterFont ?? legacyPoster?.font ?? DEFAULT_POSTER_FONT
   );
+  // RSVP form config — simple attending/not-attending only by default; dietary
+  // and comments are separate opt-in toggles, and a meal question only appears
+  // once the planner has defined at least one option (never freeform).
+  const [collectDietary, setCollectDietary] = useState<boolean>(initialData?.rsvpConfig?.collectDietary ?? false);
+  const [collectComments, setCollectComments] = useState<boolean>(initialData?.rsvpConfig?.collectComments ?? false);
+  const [mealOptions, setMealOptions] = useState<string[]>(initialData?.rsvpConfig?.mealOptions ?? []);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanError, setFloorPlanError] = useState<string | null>(null);
   const [floorPlanSuggesting, setFloorPlanSuggesting] = useState(false);
   const [floorPlanSuggestion, setFloorPlanSuggestion] = useState<{ tables: TableGroup[]; note: string | null } | null>(null);
+  const [menuUploading, setMenuUploading] = useState(false);
+  const [menuError, setMenuError] = useState<string | null>(null);
+  const [menuNote, setMenuNote] = useState<string | null>(null);
+  const [newMealOption, setNewMealOption] = useState("");
   const [guestSearch, setGuestSearch] = useState("");
   const [compactGuestRows, setCompactGuestRows] = useState(false);
   // Inline "add rule" popover state — only one open at a time, keyed by guest id.
@@ -1099,6 +1116,7 @@ export default function SeatingPlanner({
             posterLayout,
             posterPalette,
             posterFont,
+            rsvpConfig: { collectDietary, collectComments, mealOptions },
           },
           updated_at: new Date().toISOString(),
         })
@@ -1129,6 +1147,9 @@ export default function SeatingPlanner({
     posterLayout,
     posterPalette,
     posterFont,
+    collectDietary,
+    collectComments,
+    mealOptions,
   ]);
 
   const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
@@ -1679,6 +1700,72 @@ export default function SeatingPlanner({
     if (!floorPlanSuggestion) return;
     setTableGroups(floorPlanSuggestion.tables);
     setFloorPlanSuggestion(null);
+  }
+
+  const MENU_MAX_BYTES = 20 * 1024 * 1024;
+  const MENU_ALLOWED_EXT = new Set(["pdf", "docx", "xlsx", "xls", "csv"]);
+
+  // Uploads a caterer's menu doc, has Claude pull the distinct dish options out of
+  // it, and merges those into the planner-defined mealOptions list — the file
+  // itself is only a means to that list, so it's deleted from storage right after.
+  async function handleMenuUpload(file: File) {
+    if (readOnly) return;
+    setMenuError(null);
+    setMenuNote(null);
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    if (!MENU_ALLOWED_EXT.has(ext)) {
+      setMenuError("Upload a PDF, Word (.docx), or spreadsheet (.xlsx/.xls/.csv) file.");
+      return;
+    }
+    if (file.size > MENU_MAX_BYTES) {
+      setMenuError("That file is too large — keep it under 20MB.");
+      return;
+    }
+    const path = `events/${eventId}/${crypto.randomUUID()}.${ext}`;
+    setMenuUploading(true);
+    const supabase = createClient();
+    const { error: uploadError } = await supabase.storage
+      .from("menus")
+      .upload(path, file, { contentType: file.type || undefined });
+    if (uploadError) {
+      setMenuUploading(false);
+      setMenuError(`Couldn't upload that file: ${uploadError.message}`);
+      return;
+    }
+    try {
+      const res = await fetch("/api/menu/extract", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventId, path }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setMenuError(json.error || "Couldn't read that menu file.");
+        return;
+      }
+      const found: string[] = json.options || [];
+      if (found.length === 0) {
+        setMenuError(json.note || "Couldn't find any menu options in that file.");
+        return;
+      }
+      setMealOptions((prev) => {
+        const seen = new Set(prev.map((o) => o.toLowerCase()));
+        const merged = [...prev];
+        for (const o of found) {
+          if (!seen.has(o.toLowerCase())) {
+            seen.add(o.toLowerCase());
+            merged.push(o);
+          }
+        }
+        return merged;
+      });
+      setMenuNote(json.note || `Added ${found.length} option${found.length === 1 ? "" : "s"} from ${file.name}.`);
+    } catch {
+      setMenuError("Couldn't reach the AI service. Try again in a moment.");
+    } finally {
+      setMenuUploading(false);
+      await supabase.storage.from("menus").remove([path]);
+    }
   }
 
   function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -2647,6 +2734,128 @@ export default function SeatingPlanner({
                 </div>
               )}
             </div>
+
+            {rsvpEnabled && (
+              <div className="rounded-xl border p-4 mt-3" style={{ borderColor: C.line, backgroundColor: C.paper }}>
+                <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: C.muted }}>
+                  What guests are asked
+                </div>
+                <p className="text-xs mb-3" style={{ color: C.muted }}>
+                  By default guests only confirm attending or not. Turn on anything else you want to collect.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-4 mb-4">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: C.ink }}>
+                    <input
+                      type="checkbox"
+                      checked={collectDietary}
+                      onChange={(e) => setCollectDietary(e.target.checked)}
+                      disabled={readOnly}
+                    />
+                    Ask about dietary restrictions
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: C.ink }}>
+                    <input
+                      type="checkbox"
+                      checked={collectComments}
+                      onChange={(e) => setCollectComments(e.target.checked)}
+                      disabled={readOnly}
+                    />
+                    Ask for open comments
+                  </label>
+                </div>
+
+                <div className="text-sm font-medium mb-1" style={{ color: C.ink }}>
+                  Meal options
+                </div>
+                <p className="text-xs mb-3" style={{ color: C.muted }}>
+                  Define the exact choices guests can pick from — they can't type in their own. Leave this empty to skip the meal question entirely.
+                </p>
+
+                {mealOptions.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {mealOptions.map((opt, i) => (
+                      <span
+                        key={`${opt}-${i}`}
+                        className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border"
+                        style={{ borderColor: C.line, backgroundColor: C.card, color: C.ink }}
+                      >
+                        {opt}
+                        {!readOnly && (
+                          <button
+                            onClick={() => setMealOptions((prev) => prev.filter((_, idx) => idx !== i))}
+                            aria-label={`Remove ${opt}`}
+                            style={{ color: C.muted }}
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {!readOnly && (
+                  <>
+                    <div className="flex items-center gap-2 mb-3">
+                      <input
+                        value={newMealOption}
+                        onChange={(e) => setNewMealOption(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && newMealOption.trim()) {
+                            e.preventDefault();
+                            setMealOptions((prev) => [...prev, newMealOption.trim()]);
+                            setNewMealOption("");
+                          }
+                        }}
+                        placeholder="e.g. Herb-Roasted Chicken"
+                        className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border text-sm outline-none"
+                        style={{ borderColor: C.line, backgroundColor: C.card, color: C.ink }}
+                      />
+                      <button
+                        onClick={() => {
+                          if (!newMealOption.trim()) return;
+                          setMealOptions((prev) => [...prev, newMealOption.trim()]);
+                          setNewMealOption("");
+                        }}
+                        className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg shrink-0"
+                        style={{ backgroundColor: C.gold, color: "#fff" }}
+                      >
+                        <Plus size={12} /> Add
+                      </button>
+                    </div>
+
+                    <label
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer"
+                      style={{ backgroundColor: C.card, color: C.ink, border: `1px solid ${C.line}` }}
+                    >
+                      <Upload size={12} />
+                      {menuUploading ? "Reading menu…" : "Upload menu from caterer (PDF, Word, or Excel)"}
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.xlsx,.xls,.csv"
+                        className="hidden"
+                        disabled={menuUploading}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = "";
+                          if (file) handleMenuUpload(file);
+                        }}
+                      />
+                    </label>
+                    {menuError && (
+                      <p className="text-xs mt-2" style={{ color: C.wine }}>
+                        {menuError}
+                      </p>
+                    )}
+                    {!menuError && menuNote && (
+                      <p className="text-xs mt-2" style={{ color: C.muted }}>
+                        {menuNote}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
 

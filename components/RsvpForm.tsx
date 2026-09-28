@@ -15,7 +15,42 @@ const C = {
 
 type Step = "name" | "details" | "done";
 
-export default function RsvpForm({ eventId }: { eventId: string }) {
+// The single `note` field on a guest record (also used elsewhere in the planner,
+// e.g. seat-map tooltips) is where dietary + open-comment answers both end up —
+// there's no separate column for each. When both are collected we combine them
+// with a "Dietary: " label so they stay distinguishable; splitting them back out
+// for editing is best-effort only, since a planner could toggle these on/off
+// between visits.
+function splitExistingNote(raw: string, collectDietary: boolean, collectComments: boolean) {
+  if (!raw) return { dietary: "", comments: "" };
+  if (collectDietary && collectComments) {
+    const match = raw.match(/^Dietary:\s*([\s\S]*?)(?:\s*\|\s*([\s\S]*))?$/);
+    if (match) return { dietary: match[1] || "", comments: match[2] || "" };
+    return { dietary: "", comments: raw };
+  }
+  if (collectDietary) return { dietary: raw.replace(/^Dietary:\s*/, ""), comments: "" };
+  if (collectComments) return { dietary: "", comments: raw };
+  return { dietary: "", comments: "" };
+}
+
+function combineNote(dietary: string, comments: string, collectDietary: boolean, collectComments: boolean) {
+  const parts: string[] = [];
+  if (collectDietary && dietary.trim()) parts.push(`Dietary: ${dietary.trim()}`);
+  if (collectComments && comments.trim()) parts.push(collectDietary ? `| ${comments.trim()}` : comments.trim());
+  return parts.join(" ");
+}
+
+export default function RsvpForm({
+  eventId,
+  collectDietary,
+  collectComments,
+  mealOptions,
+}: {
+  eventId: string;
+  collectDietary: boolean;
+  collectComments: boolean;
+  mealOptions: string[];
+}) {
   const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,7 +60,8 @@ export default function RsvpForm({ eventId }: { eventId: string }) {
   const [guestName, setGuestName] = useState("");
   const [attending, setAttending] = useState<"attending" | "declined" | null>(null);
   const [mealChoice, setMealChoice] = useState("");
-  const [note, setNote] = useState("");
+  const [dietary, setDietary] = useState("");
+  const [comments, setComments] = useState("");
 
   async function handleLookup(e: React.FormEvent) {
     e.preventDefault();
@@ -46,8 +82,10 @@ export default function RsvpForm({ eventId }: { eventId: string }) {
       setGuestId(json.guestId);
       setGuestName(json.name);
       setAttending(json.rsvpStatus === "declined" ? "declined" : json.rsvpStatus === "attending" ? "attending" : null);
-      setMealChoice(json.mealChoice || "");
-      setNote(json.note || "");
+      setMealChoice(mealOptions.includes(json.mealChoice) ? json.mealChoice : "");
+      const split = splitExistingNote(json.note || "", collectDietary, collectComments);
+      setDietary(split.dietary);
+      setComments(split.comments);
       setStep("details");
     } catch {
       setError("Couldn't reach the server. Check your connection and try again.");
@@ -62,6 +100,7 @@ export default function RsvpForm({ eventId }: { eventId: string }) {
     setLoading(true);
     setError(null);
     try {
+      const note = combineNote(dietary, comments, collectDietary, collectComments);
       const res = await fetch(`/api/rsvp/${eventId}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -142,31 +181,56 @@ export default function RsvpForm({ eventId }: { eventId: string }) {
 
         {attending === "attending" && (
           <>
-            <label className="text-sm">
-              <span className="block mb-1 font-medium" style={{ color: C.ink }}>
-                Meal choice
-              </span>
-              <input
-                value={mealChoice}
-                onChange={(e) => setMealChoice(e.target.value)}
-                placeholder="e.g. Chicken, Vegetarian…"
-                className="w-full px-3 py-2 rounded-lg border text-sm outline-none"
-                style={{ borderColor: C.line, color: C.ink }}
-              />
-            </label>
-            <label className="text-sm">
-              <span className="block mb-1 font-medium" style={{ color: C.ink }}>
-                Dietary needs or notes (optional)
-              </span>
-              <textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Allergies, high chair, accessibility needs…"
-                rows={2}
-                className="w-full px-3 py-2 rounded-lg border text-sm outline-none resize-none"
-                style={{ borderColor: C.line, color: C.ink }}
-              />
-            </label>
+            {mealOptions.length > 0 && (
+              <label className="text-sm">
+                <span className="block mb-1 font-medium" style={{ color: C.ink }}>
+                  Meal choice
+                </span>
+                <select
+                  value={mealChoice}
+                  onChange={(e) => setMealChoice(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border text-sm outline-none bg-white"
+                  style={{ borderColor: C.line, color: C.ink }}
+                >
+                  <option value="">Select…</option>
+                  {mealOptions.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {collectDietary && (
+              <label className="text-sm">
+                <span className="block mb-1 font-medium" style={{ color: C.ink }}>
+                  Dietary restrictions (optional)
+                </span>
+                <textarea
+                  value={dietary}
+                  onChange={(e) => setDietary(e.target.value)}
+                  placeholder="Allergies, gluten-free, vegetarian…"
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-lg border text-sm outline-none resize-none"
+                  style={{ borderColor: C.line, color: C.ink }}
+                />
+              </label>
+            )}
+            {collectComments && (
+              <label className="text-sm">
+                <span className="block mb-1 font-medium" style={{ color: C.ink }}>
+                  Anything else? (optional)
+                </span>
+                <textarea
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value)}
+                  placeholder="High chair, accessibility needs, a note for the couple…"
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-lg border text-sm outline-none resize-none"
+                  style={{ borderColor: C.line, color: C.ink }}
+                />
+              </label>
+            )}
           </>
         )}
 

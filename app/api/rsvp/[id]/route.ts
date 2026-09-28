@@ -15,6 +15,7 @@ interface GuestRecord {
 interface EventData {
   guests?: GuestRecord[];
   seatAssignment?: Record<string, string>;
+  rsvpConfig?: { collectDietary?: boolean; collectComments?: boolean; mealOptions?: string[] };
   [key: string]: unknown;
 }
 
@@ -95,11 +96,21 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (body.action === "submit") {
     const guestId = typeof body.guestId === "string" ? body.guestId : "";
     const rsvpStatus = body.rsvpStatus;
-    const mealChoice = typeof body.mealChoice === "string" ? body.mealChoice.trim() : "";
+    let mealChoice = typeof body.mealChoice === "string" ? body.mealChoice.trim() : "";
     const note = typeof body.note === "string" ? body.note.trim() : "";
 
     if (rsvpStatus !== "attending" && rsvpStatus !== "declined") {
       return NextResponse.json({ error: "Please choose whether you're attending." }, { status: 400 });
+    }
+
+    // The planner defines the exact menu — guests pick from that list, never free
+    // text. Enforce it here too, since this endpoint is public and unauthenticated
+    // and the client-side <select> alone wouldn't stop a direct API call.
+    const configuredMealOptions = data.rsvpConfig?.mealOptions ?? [];
+    if (configuredMealOptions.length === 0) {
+      mealChoice = "";
+    } else if (mealChoice && !configuredMealOptions.includes(mealChoice)) {
+      return NextResponse.json({ error: "That meal choice isn't one of the options offered. Please pick from the list." }, { status: 400 });
     }
     const idx = guests.findIndex((g) => g.id === guestId);
     if (idx === -1) {
