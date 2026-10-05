@@ -31,6 +31,7 @@ export default async function LocationsPage() {
       .from("events")
       .select("id, name, location, event_date")
       .eq("owner_id", user.id)
+      .is("deleted_at", null)
       .not("location", "is", null),
   ]);
 

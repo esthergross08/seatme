@@ -77,6 +77,7 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
           .from("events")
           .select("id, name, location, event_date, updated_at, max_capacity, data")
           .eq("owner_id", ownerId)
+          .is("deleted_at", null)
           .not("location", "is", null)
           .order("updated_at", { ascending: false })
           .limit(50),

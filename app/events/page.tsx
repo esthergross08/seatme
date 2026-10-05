@@ -27,10 +27,20 @@ export default async function EventsPage() {
 
   if (!user) redirect("/login");
 
-  const { data: events } = await supabase
-    .from("events")
-    .select("*")
-    .order("updated_at", { ascending: false });
+  const [{ data: events }, { data: deletedEvents }] = await Promise.all([
+    supabase
+      .from("events")
+      .select("*")
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false }),
+    // Only the owner can delete (and so restore) an event.
+    supabase
+      .from("events")
+      .select("id, name, owner_id, updated_at, deleted_at, event_date, location")
+      .eq("owner_id", user.id)
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false }),
+  ]);
 
   return (
     <div
@@ -56,7 +66,7 @@ export default async function EventsPage() {
           <NewEventButton ownerId={user.id} />
         </div>
 
-        <EventsList events={events ?? []} userId={user.id} />
+        <EventsList events={events ?? []} deletedEvents={deletedEvents ?? []} userId={user.id} />
       </div>
     </div>
   );

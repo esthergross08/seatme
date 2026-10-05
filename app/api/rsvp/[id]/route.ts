@@ -67,8 +67,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const { data: event, error: eventError } = await admin
     .from("events")
-    .select("id, rsvp_enabled, data")
+    .select("id, rsvp_enabled, data, updated_at")
     .eq("id", eventId)
+    .is("deleted_at", null)
     .single();
 
   if (eventError || !event) {
@@ -173,9 +174,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     const newData: EventData = { ...data, guests: updatedGuests, seatAssignment };
-    const { error: updateError } = await admin.from("events").update({ data: newData }).eq("id", eventId);
+    // Only write if nobody saved in between (the planner autosaves the whole plan),
+    // otherwise this read-modify-write would undo whatever they just changed.
+    const { data: written, error: updateError } = await admin
+      .from("events")
+      .update({ data: newData })
+      .eq("id", eventId)
+      .eq("updated_at", event.updated_at)
+      .select("id");
     if (updateError) {
       return NextResponse.json({ error: "Couldn't save your RSVP. Try again in a bit." }, { status: 500 });
+    }
+    if (!written || written.length === 0) {
+      return NextResponse.json({ error: "Couldn't save your RSVP just then — please press submit again." }, { status: 409 });
     }
     return NextResponse.json({ ok: true });
   }

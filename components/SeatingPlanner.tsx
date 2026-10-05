@@ -238,6 +238,8 @@ interface SeatingPlannerProps {
   initialLocation?: string | null;
   initialMaxCapacity?: number | null;
   initialRsvpEnabled?: boolean;
+  /** The row's updated_at when the page loaded — the autosave concurrency token. */
+  initialUpdatedAt: string;
 }
 
 // ---------- geometry helpers ----------
@@ -949,6 +951,7 @@ export default function SeatingPlanner({
   initialLocation,
   initialMaxCapacity,
   initialRsvpEnabled,
+  initialUpdatedAt,
 }: SeatingPlannerProps) {
   const readOnly = role === "viewer";
 
@@ -1111,50 +1114,148 @@ export default function SeatingPlanner({
   }, [seatingView]);
 
   // ---- Supabase autosave ----
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // Each save writes the whole plan, so it's guarded by updated_at (bumped by a DB
+  // trigger on every write, including guest RSVPs): the update only lands if the row
+  // still has the updated_at this tab last saw. Otherwise another tab, a collaborator
+  // or an RSVP changed it, and writing anyway would silently wipe their changes — e.g.
+  // a tab left open from before a guest-list import saving over the imported guests.
+  // "conflict" stops autosaving until the user reloads; "deleted"/"error" never claim
+  // "All changes saved" for a write that didn't happen (an RLS-blocked update returns
+  // no error, just zero rows, which is why we check the returned rows).
+  type SaveStatus = "idle" | "saving" | "saved" | "error" | "conflict" | "deleted";
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const hydrated = useRef(false);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastUpdatedAt = useRef(initialUpdatedAt);
+  const pendingPayload = useRef<Record<string, unknown> | null>(null);
+  const saveInFlight = useRef(false);
+  const blockedRef = useRef(false); // set once we hit a conflict/deletion; no more writes
+  const dirtyRef = useRef(false); // there are edits that haven't been confirmed saved
+
+  async function diagnoseFailedSave(): Promise<SaveStatus> {
+    const { data } = await createClient()
+      .from("events")
+      .select("updated_at, deleted_at")
+      .eq("id", eventId)
+      .maybeSingle();
+    if (!data) return "error"; // no access any more, most likely signed out
+    if (data.deleted_at) return "deleted";
+    return data.updated_at !== lastUpdatedAt.current ? "conflict" : "error";
+  }
+
+  async function flushSave() {
+    if (saveInFlight.current || blockedRef.current || !pendingPayload.current) return;
+    const payload = pendingPayload.current;
+    pendingPayload.current = null;
+    saveInFlight.current = true;
+    const { data, error } = await createClient()
+      .from("events")
+      .update(payload)
+      .eq("id", eventId)
+      .eq("updated_at", lastUpdatedAt.current)
+      .is("deleted_at", null)
+      .select("updated_at");
+    saveInFlight.current = false;
+
+    if (!error && data && data.length > 0) {
+      lastUpdatedAt.current = data[0].updated_at;
+      if (pendingPayload.current) {
+        // More edits arrived while this one was in flight — save those next, with the
+        // fresh updated_at, rather than racing them against this request.
+        flushSave();
+      } else {
+        dirtyRef.current = false;
+        setSaveStatus("saved");
+      }
+      return;
+    }
+
+    const status = error ? "error" : await diagnoseFailedSave();
+    if (status === "conflict" || status === "deleted") blockedRef.current = true;
+    // Keep the unsaved payload so the next edit (or a retry) still includes it.
+    if (status === "error" && !pendingPayload.current) pendingPayload.current = payload;
+    setSaveStatus(status);
+  }
+
+  // A tab that sat in the background may be out of date. Check on return, before
+  // the user makes edits that would then be refused (or, before this guard existed,
+  // would have overwritten newer data).
+  useEffect(() => {
+    if (readOnly) return;
+    async function onVisible() {
+      if (document.visibilityState !== "visible" || blockedRef.current || saveInFlight.current) return;
+      const seen = lastUpdatedAt.current;
+      const { data } = await createClient()
+        .from("events")
+        .select("updated_at, deleted_at")
+        .eq("id", eventId)
+        .maybeSingle();
+      // If one of our own saves ran meanwhile, this read may predate it — not a conflict.
+      if (!data || saveInFlight.current || lastUpdatedAt.current !== seen) return;
+      if (data.deleted_at) {
+        blockedRef.current = true;
+        setSaveStatus("deleted");
+      } else if (data.updated_at !== lastUpdatedAt.current) {
+        blockedRef.current = true;
+        setSaveStatus("conflict");
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly, eventId]);
+
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      // Leaving the planner in-app (e.g. back to My events) inside the 800ms debounce
+      // shouldn't drop the last edit.
+      if (saveTimeout.current) clearTimeout(saveTimeout.current);
+      flushSave();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!hydrated.current) {
       hydrated.current = true;
       return;
     }
-    if (readOnly) return;
+    if (readOnly || blockedRef.current) return;
+    dirtyRef.current = true;
+    pendingPayload.current = {
+      name: eventName,
+      event_date: eventDate || null,
+      location: location || null,
+      max_capacity: maxCapacity === "" ? null : maxCapacity,
+      rsvp_enabled: rsvpEnabled,
+      data: {
+        tableGroups,
+        guests,
+        groups,
+        constraints,
+        seatAssignment,
+        fillMode,
+        tableNameOverrides,
+        tablePositions,
+        floorPlan,
+        fixtures,
+        fixturePositions,
+        posterLayout,
+        posterPalette,
+        posterFont,
+        rsvpConfig: { collectComments, courses },
+      },
+    };
     setSaveStatus("saving");
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(async () => {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("events")
-        .update({
-          name: eventName,
-          event_date: eventDate || null,
-          location: location || null,
-          max_capacity: maxCapacity === "" ? null : maxCapacity,
-          rsvp_enabled: rsvpEnabled,
-          data: {
-            tableGroups,
-            guests,
-            groups,
-            constraints,
-            seatAssignment,
-            fillMode,
-            tableNameOverrides,
-            tablePositions,
-            floorPlan,
-            fixtures,
-            fixturePositions,
-            posterLayout,
-            posterPalette,
-            posterFont,
-            rsvpConfig: { collectComments, courses },
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", eventId);
-      setSaveStatus(error ? "error" : "saved");
-    }, 800);
+    saveTimeout.current = setTimeout(flushSave, 800);
     return () => {
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
     };
@@ -2684,17 +2785,81 @@ export default function SeatingPlanner({
               </span>
             </div>
 
-            {(readOnly || saveStatus !== "idle") && (
-              <span
-                className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full"
-                style={{
-                  backgroundColor: saveStatus === "error" ? "#F3E4E4" : "#EEF2EA",
-                  color: saveStatus === "error" ? C.wine : C.sage,
-                }}
+            {(readOnly || saveStatus !== "idle") && (() => {
+              const bad = !readOnly && (saveStatus === "error" || saveStatus === "conflict" || saveStatus === "deleted");
+              return (
+                <span
+                  className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full"
+                  style={{ backgroundColor: bad ? "#F3E4E4" : "#EEF2EA", color: bad ? C.wine : C.sage }}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: bad ? C.wine : C.sage }} />
+                  {readOnly
+                    ? "View only"
+                    : saveStatus === "saving"
+                      ? "Saving…"
+                      : saveStatus === "error"
+                        ? "Not saved"
+                        : saveStatus === "conflict"
+                          ? "Out of date"
+                          : saveStatus === "deleted"
+                            ? "Event deleted"
+                            : "All changes saved"}
+                  {!readOnly && saveStatus === "error" && (
+                    <button
+                      onClick={() => {
+                        setSaveStatus("saving");
+                        flushSave();
+                      }}
+                      className="underline font-semibold ml-0.5"
+                    >
+                      Retry
+                    </button>
+                  )}
+                </span>
+              );
+            })()}
+
+            {!readOnly && (saveStatus === "conflict" || saveStatus === "deleted" || saveStatus === "error") && (
+              <div
+                role="alert"
+                className="fixed z-50 left-1/2 -translate-x-1/2 top-4 flex flex-wrap items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm"
+                style={{ backgroundColor: "#F3E4E4", color: "#8C3B3B", maxWidth: "min(560px, calc(100vw - 32px))" }}
               >
-                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: saveStatus === "error" ? C.wine : C.sage }} />
-                {readOnly ? "View only" : saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Save failed" : "All changes saved"}
-              </span>
+                <span className="flex-1 min-w-[200px]">
+                  {saveStatus === "conflict"
+                    ? "This event was changed somewhere else — another tab, a collaborator, or a guest's RSVP. To avoid overwriting those changes, saving is paused. Reload to get the latest version, then redo your last change."
+                    : saveStatus === "deleted"
+                      ? "This event has been deleted, so changes here can't be saved. You can restore it from Recently deleted on My events."
+                      : "Your latest changes haven't been saved. Check your connection, or sign in again if you were signed out, then hit Retry."}
+                </span>
+                {saveStatus === "conflict" && (
+                  <button
+                    onClick={() => {
+                      dirtyRef.current = false; // the edit can't be saved anyway; skip the leave-page prompt
+                      window.location.reload();
+                    }}
+                    className="font-semibold underline shrink-0"
+                  >
+                    Reload
+                  </button>
+                )}
+                {saveStatus === "deleted" && (
+                  <a href="/events" onClick={() => (dirtyRef.current = false)} className="font-semibold underline shrink-0">
+                    My events
+                  </a>
+                )}
+                {saveStatus === "error" && (
+                  <button
+                    onClick={() => {
+                      setSaveStatus("saving");
+                      flushSave();
+                    }}
+                    className="font-semibold underline shrink-0"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
             )}
 
             {role === "owner" && (

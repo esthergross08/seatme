@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Search, Trash2, Undo2 } from "lucide-react";
+import { ChevronDown, RotateCcw, Search, Trash2, Undo2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const C = {
@@ -22,9 +22,15 @@ interface EventRow {
   event_date?: string | null;
   location?: string | null;
   max_capacity?: number | null;
-  // Fetched via `select("*")` upstream — carried through untyped so a full row
-  // (including the `data` seating-plan blob) can be re-inserted verbatim on undo.
+  deleted_at?: string | null;
+  // Fetched via `select("*")` upstream; `data` is read for the guest count shown
+  // in the delete confirmation.
   [key: string]: unknown;
+}
+
+function guestCount(ev: EventRow) {
+  const data = ev.data as { guests?: unknown[] } | null | undefined;
+  return Array.isArray(data?.guests) ? data.guests.length : 0;
 }
 
 function formatEventDate(dateStr: string) {
@@ -37,13 +43,24 @@ function formatEventDate(dateStr: string) {
 
 type SortBy = "recent" | "name";
 
-export default function EventsList({ events, userId }: { events: EventRow[]; userId: string }) {
+export default function EventsList({
+  events,
+  deletedEvents,
+  userId,
+}: {
+  events: EventRow[];
+  deletedEvents: EventRow[];
+  userId: string;
+}) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("recent");
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [undo, setUndo] = useState<{ message: string; restore: () => void } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<EventRow | null>(null);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -65,49 +82,59 @@ export default function EventsList({ events, userId }: { events: EventRow[]; use
     return list;
   }, [events, hiddenIds, search, sortBy]);
 
-  // No confirmation dialog, per the usual pattern here — but the delete itself happens
-  // right away rather than being deferred. An earlier version deferred the actual database
-  // delete until the undo window expired, which turned out to be fragile: if you navigated
-  // away (into an event and back) before the timer fired, the delete could get lost, or a
-  // stale cached copy of this list could make it look like nothing happened either way.
-  // Undo now works by re-inserting the exact row that was deleted (same id and all), which
-  // is simple to reason about and doesn't depend on this component staying mounted.
+  // Deleting asks first, and is a soft delete: it sets deleted_at rather than removing
+  // the row. A hard delete took the whole guest list with it (plus collaborators and
+  // logs, which cascade), and an 8-second undo toast was the only way back — easy to
+  // miss, and someone did lose an imported guest list that way. Deleted events now sit
+  // in "Recently deleted" below the list, where the owner can restore them any time.
   async function handleDelete(ev: EventRow) {
+    setConfirmDelete(null);
     setHiddenIds((prev) => new Set(prev).add(ev.id));
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     setUndo(null);
 
-    const supabase = createClient();
-    const { error: deleteError } = await supabase.from("events").delete().eq("id", ev.id);
+    const { data: deleted, error: deleteError } = await createClient()
+      .from("events")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", ev.id)
+      .select("id");
 
-    if (deleteError) {
+    if (deleteError || !deleted || deleted.length === 0) {
       setHiddenIds((prev) => {
         const next = new Set(prev);
         next.delete(ev.id);
         return next;
       });
-      setError(`Couldn't delete "${ev.name || "Untitled event"}": ${deleteError.message}`);
+      setError(`Couldn't delete "${ev.name || "Untitled event"}"${deleteError ? `: ${deleteError.message}` : "."}`);
       return;
     }
 
     router.refresh();
     setUndo({
-      message: `Deleted "${ev.name || "Untitled event"}".`,
-      restore: async () => {
-        const { error: restoreError } = await supabase.from("events").insert(ev);
-        if (restoreError) {
-          setError(`Couldn't restore "${ev.name || "Untitled event"}": ${restoreError.message}`);
-          return;
-        }
-        setHiddenIds((prev) => {
-          const next = new Set(prev);
-          next.delete(ev.id);
-          return next;
-        });
-        router.refresh();
-      },
+      message: `Deleted "${ev.name || "Untitled event"}". You can restore it from Recently deleted.`,
+      restore: () => restoreEvent(ev),
     });
     undoTimerRef.current = setTimeout(() => setUndo(null), 8000);
+  }
+
+  async function restoreEvent(ev: EventRow) {
+    setRestoringId(ev.id);
+    const { data: restored, error: restoreError } = await createClient()
+      .from("events")
+      .update({ deleted_at: null })
+      .eq("id", ev.id)
+      .select("id");
+    setRestoringId(null);
+    if (restoreError || !restored || restored.length === 0) {
+      setError(`Couldn't restore "${ev.name || "Untitled event"}"${restoreError ? `: ${restoreError.message}` : "."}`);
+      return;
+    }
+    setHiddenIds((prev) => {
+      const next = new Set(prev);
+      next.delete(ev.id);
+      return next;
+    });
+    router.refresh();
   }
 
   function performUndo() {
@@ -184,7 +211,7 @@ export default function EventsList({ events, userId }: { events: EventRow[]; use
               <button
                 onClick={(e) => {
                   e.preventDefault();
-                  handleDelete(ev);
+                  setConfirmDelete(ev);
                 }}
                 title="Delete event"
                 aria-label={`Delete ${ev.name || "Untitled event"}`}
@@ -197,6 +224,94 @@ export default function EventsList({ events, userId }: { events: EventRow[]; use
           </div>
         ))}
       </div>
+
+      {deletedEvents.length > 0 && (
+        <div className="mt-8">
+          <button
+            onClick={() => setShowDeleted((v) => !v)}
+            aria-expanded={showDeleted}
+            className="flex items-center gap-1.5 text-xs font-semibold"
+            style={{ color: C.muted }}
+          >
+            <ChevronDown size={14} style={{ transform: showDeleted ? "none" : "rotate(-90deg)", transition: "transform 0.15s" }} />
+            Recently deleted ({deletedEvents.length})
+          </button>
+          {showDeleted && (
+            <div className="mt-3 flex flex-col gap-2">
+              {deletedEvents.map((ev) => (
+                <div
+                  key={ev.id}
+                  className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border"
+                  style={{ borderColor: C.line, backgroundColor: C.card, opacity: restoringId === ev.id ? 0.6 : 1 }}
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate" style={{ color: C.ink, fontFamily: "Fraunces, serif" }}>
+                      {ev.name || "Untitled event"}
+                    </div>
+                    {ev.deleted_at && (
+                      <div className="text-xs" style={{ color: C.muted }}>
+                        Deleted {new Date(ev.deleted_at).toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => restoreEvent(ev)}
+                    disabled={restoringId === ev.id}
+                    className="flex items-center gap-1.5 text-sm font-semibold shrink-0"
+                    style={{ color: C.gold }}
+                  >
+                    <RotateCcw size={14} /> Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ backgroundColor: "rgba(34,31,43,0.45)" }}
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-delete-title"
+            className="w-full max-w-sm p-5 rounded-xl shadow-lg"
+            style={{ backgroundColor: C.card }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="confirm-delete-title" className="text-lg mb-2" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+              Delete &ldquo;{confirmDelete.name || "Untitled event"}&rdquo;?
+            </h2>
+            <p className="text-sm mb-5" style={{ color: C.muted }}>
+              {guestCount(confirmDelete) > 0
+                ? `Its ${guestCount(confirmDelete)} guest${guestCount(confirmDelete) === 1 ? "" : "s"}, tables and seating go with it. `
+                : ""}
+              You can restore it later from Recently deleted at the bottom of this page.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                autoFocus
+                onClick={() => setConfirmDelete(null)}
+                className="px-3 py-2 rounded-lg border text-sm font-medium"
+                style={{ borderColor: C.line, color: C.ink }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(confirmDelete)}
+                className="px-3 py-2 rounded-lg text-sm font-semibold"
+                style={{ backgroundColor: "#8C3B3B", color: "#FFFFFF" }}
+              >
+                Delete event
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {undo && (
         <div

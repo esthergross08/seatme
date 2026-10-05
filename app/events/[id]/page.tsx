@@ -21,6 +21,7 @@ export default async function EventPage({
     .from("events")
     .select("*")
     .eq("id", id)
+    .is("deleted_at", null)
     .single();
 
   if (error || !event) notFound();
@@ -47,6 +48,7 @@ export default async function EventPage({
         initialLocation={event.location ?? null}
         initialMaxCapacity={event.max_capacity ?? null}
         initialRsvpEnabled={event.rsvp_enabled ?? false}
+        initialUpdatedAt={event.updated_at}
       />
     </Suspense>
   );

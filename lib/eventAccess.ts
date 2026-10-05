@@ -18,7 +18,7 @@ export async function getEventRole(
   } = await supabase.auth.getUser();
   if (!user) return { role: null, userId: null };
 
-  const { data: event, error } = await supabase.from("events").select("id, owner_id").eq("id", eventId).single();
+  const { data: event, error } = await supabase.from("events").select("id, owner_id").eq("id", eventId).is("deleted_at", null).single();
   if (error || !event) return { role: null, userId: user.id };
 
   if (event.owner_id === user.id) return { role: "owner", userId: user.id };

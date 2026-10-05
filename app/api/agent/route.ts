@@ -238,6 +238,7 @@ export async function POST(request: Request) {
     .from("events")
     .select("id, owner_id")
     .eq("id", eventId)
+    .is("deleted_at", null)
     .single();
   if (eventError || !event) return NextResponse.json({ error: "Event not found." }, { status: 404 });
 

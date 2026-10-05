@@ -41,6 +41,7 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
       .from("events")
       .select("name, event_date, location, rsvp_enabled, data")
       .eq("id", id)
+      .is("deleted_at", null)
       .single();
     event = data;
   } catch {
