@@ -32,6 +32,8 @@ import {
   Maximize2,
   Minimize2,
   Move,
+  Pencil,
+  MapPin,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -1020,7 +1022,17 @@ export default function SeatingPlanner({
   // Table tapped on the map — shows its "Remove table" action.
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [showRemovedTables, setShowRemovedTables] = useState(false);
+  // Set when a mouse press actually moved a table/fixture, so the click that
+  // follows the drag doesn't also select it.
   const tableJustDragged = useRef(false);
+  const [selectedFixtureId, setSelectedFixtureId] = useState<string | null>(null);
+  // "Move" from the selection menu: the next tap on the map is where it goes —
+  // the no-drag way to rearrange the room.
+  const [movingItem, setMovingItem] = useState<{ kind: "table" | "fixture"; id: string; label: string } | null>(null);
+  // Find-a-guest on the map.
+  const [mapSearchOpen, setMapSearchOpen] = useState(false);
+  const [mapSearchQuery, setMapSearchQuery] = useState("");
+  const [highlightSeatId, setHighlightSeatId] = useState<string | null>(null);
   const [dragFixture, setDragFixture] = useState<{ id: string; x: number; y: number } | null>(null);
   const [floorPlan, setFloorPlan] = useState<FloorPlan | null>(initialData?.floorPlan ?? null);
   // Layout / color / typography are chosen independently (see lib/posterTemplates.ts).
@@ -1228,6 +1240,59 @@ export default function SeatingPlanner({
   }, [mapScale]);
   const namesOnMap = showGuestNames && zoomedInForNames;
 
+  // Below this zoom, seats are too small to hit reliably on a phone, so tapping a
+  // table or seat zooms in to that table instead of acting on it.
+  const OVERVIEW_ZOOM = 0.6;
+  const atOverview = map.view.scale < OVERVIEW_ZOOM;
+  function zoomToTable(tableId: string) {
+    const pos = layout.positions[tableId];
+    if (!pos) return;
+    const box = pos.seatR * 2 + 140; // seats + their name tags
+    // Land zoomed in far enough that names are showing.
+    map.flyTo(pos.cx, pos.cy, box, box, { maxScale: 1.3, minZoom: 0.85 });
+  }
+  function clearMapSelection() {
+    setSelectedTableId(null);
+    setSelectedFixtureId(null);
+  }
+
+
+  function showGuestOnMap(guestId: string) {
+    const seatId = seatOfGuest[guestId];
+    setMapSearchOpen(false);
+    setMapSearchQuery("");
+    clearMapSelection();
+    if (seatId && seatsById[seatId] && layout.positions[seatsById[seatId].tableId]) {
+      const p = seatPixel(seatId);
+      map.flyTo(p.x, p.y, 380, 380, { maxScale: 1.3, minZoom: 0.9 });
+      setHighlightSeatId(seatId);
+    } else if (!readOnly) {
+      // Not seated yet — pick them up so the next tap on a seat places them.
+      setPicked(guestId);
+    }
+  }
+  useEffect(() => {
+    if (!highlightSeatId) return;
+    const t = setTimeout(() => setHighlightSeatId(null), 3000);
+    return () => clearTimeout(t);
+  }, [highlightSeatId]);
+
+  // Tap on the map while "Move" is active places the item there.
+  function placeMovingItem(clientX: number, clientY: number) {
+    if (!movingItem) return;
+    const p = map.toRoom(clientX, clientY);
+    if (movingItem.kind === "table") {
+      const pos = layout.positions[movingItem.id];
+      const min = (pos?.seatR ?? 60) + 10;
+      moveTable(movingItem.id, Math.max(min, p.x), Math.max(min, p.y));
+    } else {
+      const fx = fixtures.find((f) => f.id === movingItem.id);
+      const def = fx ? FIXTURE_DEFAULTS[fx.type] : { w: 100, h: 60 };
+      moveFixture(movingItem.id, Math.max(def.w / 2, p.x), Math.max(def.h / 2, p.y));
+    }
+    setMovingItem(null);
+  }
+
   // Entering/leaving full screen goes back to the whole-room overview at the new size.
   const fitMap = map.fit;
   useEffect(() => {
@@ -1375,6 +1440,17 @@ export default function SeatingPlanner({
     });
     return m;
   }, [seatAssignment]);
+
+  // Guests matching the map search box (seated first, then unseated).
+  const mapSearchResults = useMemo(() => {
+    const q = mapSearchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return guests
+      .filter((g) => g.name.toLowerCase().includes(q))
+      .map((g) => ({ guest: g, seatId: seatOfGuest[g.id] as string | undefined }))
+      .sort((a, b) => Number(!a.seatId) - Number(!b.seatId) || a.guest.name.localeCompare(b.guest.name))
+      .slice(0, 8);
+  }, [mapSearchQuery, guests, seatOfGuest]);
   const activeGuests = useMemo(() => guests.filter((g) => g.rsvpStatus !== "declined"), [guests]);
   const unseatedGuests = useMemo(() => activeGuests.filter((g) => !seatOfGuest[g.id]), [activeGuests, seatOfGuest]);
   const seatedCount = activeGuests.length - unseatedGuests.length;
@@ -4310,7 +4386,7 @@ export default function SeatingPlanner({
                 )}
                 <span className="flex items-center gap-1.5 basis-full sm:basis-auto sm:ml-auto">
                   <Move size={11} />
-                  Pinch or Ctrl+scroll to zoom · drag the floor to move around{readOnly ? "" : " · press and hold a table to move it"}
+                  Pinch or Ctrl+scroll to zoom · drag the floor to move around{readOnly ? "" : " · tap a table for options, or press and hold to drag it"}
                 </span>
               </div>
             )}
@@ -4332,24 +4408,40 @@ export default function SeatingPlanner({
                   userSelect: "none",
                   WebkitUserSelect: "none",
                   WebkitTouchCallout: "none",
-                  cursor: "grab",
+                  cursor: movingItem ? "crosshair" : "grab",
+                  outlineColor: C.gold,
                 }}
                 // Long-press on a phone would otherwise pop the browser's context menu.
                 onContextMenu={(e) => e.preventDefault()}
-                // Tapping empty floor clears the selected table.
+                // Tapping the map: places a "Move"d table/fixture, or (on empty floor)
+                // clears the current selection.
                 onClick={(e) => {
                   const el = e.target as HTMLElement;
-                  if (!el.closest("[data-map-item]") && !el.closest("[data-map-control]")) setSelectedTableId(null);
+                  if (el.closest("[data-map-control]")) return;
+                  if (movingItem) {
+                    placeMovingItem(e.clientX, e.clientY);
+                    return;
+                  }
+                  if (!el.closest("[data-map-item]")) clearMapSelection();
+                }}
+                tabIndex={0}
+                role="region"
+                aria-label="Seating map. Arrow keys move around, plus and minus zoom, 0 shows the whole room."
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    if (movingItem || selectedTableId || selectedFixtureId || mapSearchOpen) {
+                      setMovingItem(null);
+                      clearMapSelection();
+                      setMapSearchOpen(false);
+                      e.stopPropagation();
+                    }
+                    return;
+                  }
+                  map.handlers.onKeyDown(e);
                 }}
               >
-                <div
-                  className="absolute left-0 top-0"
-                  style={{
-                    transform: `translate3d(${map.view.x}px, ${map.view.y}px, 0) scale(${map.view.scale})`,
-                    transformOrigin: "0 0",
-                    willChange: "transform",
-                  }}
-                >
+                {/* Pan/zoom transform is written onto this layer directly by useMapViewport. */}
+                <div ref={map.contentRef} className="absolute left-0 top-0">
                 <div ref={mapCaptureRef} className="relative" style={{ width: layout.width, height: layout.height, minWidth: layout.width }}>
                   <svg className="absolute inset-0 pointer-events-none" width={layout.width} height={layout.height}>
                     {flatViolations
@@ -4394,7 +4486,10 @@ export default function SeatingPlanner({
                       const onMouseMove = (ev: MouseEvent) => setDragFixture({ id: f.id, ...compute(ev.clientX, ev.clientY) });
                       const onMouseUp = (ev: MouseEvent) => {
                         const p = compute(ev.clientX, ev.clientY);
-                        moveFixture(f.id, p.x, p.y);
+                        if (Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) {
+                          tableJustDragged.current = true;
+                          moveFixture(f.id, p.x, p.y);
+                        }
                         cleanup();
                       };
                       const onTouchMove = (ev: TouchEvent) => {
@@ -4439,8 +4534,18 @@ export default function SeatingPlanner({
                         data-map-item
                         onMouseDown={startFixtureDrag}
                         onTouchStart={startFixtureDragTouch}
+                        onClick={() => {
+                          if (tableJustDragged.current) {
+                            tableJustDragged.current = false;
+                            return;
+                          }
+                          if (movingItem) return; // the map's click handler places the item
+                          setSelectedTableId(null);
+                          setSelectedFixtureId(f.id);
+                        }}
                         className="absolute flex items-center justify-center text-center px-2 group"
                         style={{
+                          boxShadow: selectedFixtureId === f.id ? `0 0 0 3px ${C.goldSoft}` : undefined,
                           left: pos.cx - def.w / 2,
                           top: pos.cy - def.h / 2,
                           width: def.w,
@@ -4459,13 +4564,48 @@ export default function SeatingPlanner({
                           <button
                             onMouseDown={(e) => e.stopPropagation()}
                             onTouchStart={(e) => e.stopPropagation()}
-                            onClick={() => removeFixtureWithUndo(f.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeFixtureWithUndo(f.id);
+                            }}
                             aria-label={`Remove ${f.label ?? def.label}`}
                             className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                             style={{ backgroundColor: "#fff", border: `1px solid ${def.border}`, color: def.border }}
                           >
                             <X size={11} />
                           </button>
+                        )}
+                        {selectedFixtureId === f.id && !readOnly && dragFixture?.id !== f.id && (
+                          <div
+                            data-map-control
+                            className="absolute z-10 flex items-center gap-1 rounded-full p-1 shadow-md"
+                            style={{
+                              left: "50%",
+                              top: -8,
+                              transform: `translate(-50%, -100%) scale(${1 / map.view.scale})`,
+                              transformOrigin: "50% 100%",
+                              backgroundColor: C.ink,
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MapMenuButton
+                              icon={<Move size={13} />}
+                              label="Move"
+                              onClick={() => {
+                                setMovingItem({ kind: "fixture", id: f.id, label: f.label ?? def.label });
+                                clearMapSelection();
+                              }}
+                            />
+                            <MapMenuButton
+                              icon={<Trash2 size={13} />}
+                              label="Remove"
+                              onClick={() => {
+                                removeFixtureWithUndo(f.id);
+                                clearMapSelection();
+                              }}
+                            />
+                          </div>
                         )}
                       </div>
                     );
@@ -4618,6 +4758,13 @@ export default function SeatingPlanner({
                               tableJustDragged.current = false;
                               return;
                             }
+                            if (movingItem) return; // the map's click handler places the item
+                            if (atOverview) {
+                              zoomToTable(t.id);
+                              clearMapSelection();
+                              return;
+                            }
+                            setSelectedFixtureId(null);
                             setSelectedTableId(t.id);
                           }}
                           className="absolute border-2 flex items-center justify-center text-center px-2"
@@ -4640,6 +4787,7 @@ export default function SeatingPlanner({
                           }}
                         >
                           <input
+                            id={`table-name-${t.id}`}
                             value={tableNameOverrides[t.id] ?? t.label}
                             onChange={(e) => renameTable(t.id, e.target.value)}
                             onBlur={(e) => {
@@ -4701,10 +4849,16 @@ export default function SeatingPlanner({
                         )}
                         {selectedTableId === t.id && !readOnly && dragTable?.id !== t.id && (() => {
                           const seatedHere = occupiedCountByTable[t.id] || 0;
+                          const group = tableGroups.find((g) => g.id === t.groupId);
+                          const sharedSize = Number(group?.count) > 1;
+                          const changeSize = (delta: number) =>
+                            updateTableGroup(t.groupId, {
+                              sizeScale: Math.round(Math.max(0.5, Math.min(2.5, (t.sizeScale || 1) + delta)) * 100) / 100,
+                            });
                           return (
                             <div
                               data-map-control
-                              className="absolute z-10"
+                              className="absolute z-10 flex flex-col items-center gap-1"
                               style={{
                                 left: renderPos.cx,
                                 top: renderPos.cy - renderPos.seatR - 6,
@@ -4713,21 +4867,38 @@ export default function SeatingPlanner({
                                 transformOrigin: "50% 100%",
                               }}
                               onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              {seatedHere === 0 ? (
-                                <button
-                                  onClick={() => deleteTableWithUndo(t.id)}
-                                  className="flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-xs font-semibold shadow-md"
-                                  style={{ backgroundColor: C.ink, color: C.paper }}
-                                >
-                                  <Trash2 size={13} /> Remove {t.label}
-                                </button>
-                              ) : (
+                              <div className="flex items-center gap-1 rounded-full p-1 shadow-md" style={{ backgroundColor: C.ink }}>
+                                <MapMenuButton
+                                  icon={<Pencil size={13} />}
+                                  label="Rename"
+                                  onClick={() => {
+                                    const input = document.getElementById(`table-name-${t.id}`) as HTMLInputElement | null;
+                                    input?.focus();
+                                    input?.select();
+                                  }}
+                                />
+                                <MapMenuButton icon={<Minus size={13} />} label="Smaller" hideLabel onClick={() => changeSize(-0.15)} />
+                                <MapMenuButton icon={<Plus size={13} />} label="Bigger" hideLabel onClick={() => changeSize(0.15)} />
+                                <MapMenuButton
+                                  icon={<Move size={13} />}
+                                  label="Move"
+                                  onClick={() => {
+                                    setMovingItem({ kind: "table", id: t.id, label: t.label });
+                                    clearMapSelection();
+                                  }}
+                                />
+                                {seatedHere === 0 && (
+                                  <MapMenuButton icon={<Trash2 size={13} />} label="Remove" onClick={() => deleteTableWithUndo(t.id)} />
+                                )}
+                              </div>
+                              {(seatedHere > 0 || sharedSize) && (
                                 <div
-                                  className="whitespace-nowrap rounded-full px-3 py-2 text-xs font-medium shadow-md"
+                                  className="whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-medium shadow-sm"
                                   style={{ backgroundColor: C.card, color: C.muted, border: `1px solid ${C.line}` }}
                                 >
-                                  {seatedHere} seated — move them to remove this table
+                                  {seatedHere > 0 ? `${seatedHere} seated — move them to remove this table` : `Size changes every "${group?.label}" table`}
                                 </div>
                               )}
                             </div>
@@ -4773,7 +4944,14 @@ export default function SeatingPlanner({
                               </span>
                             )}
                             <div
-                              onClick={() => handleSeatClick(seatId)}
+                              onClick={() => {
+                                if (movingItem) return; // the map's click handler places the item
+                                if (atOverview) {
+                                  zoomToTable(t.id);
+                                  return;
+                                }
+                                handleSeatClick(seatId);
+                              }}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
@@ -4893,10 +5071,94 @@ export default function SeatingPlanner({
                       </div>
                     );
                   })}
+
+                  {highlightSeatId && seatsById[highlightSeatId] && layout.positions[seatsById[highlightSeatId].tableId] && (() => {
+                    const p = seatPixel(highlightSeatId);
+                    return (
+                      <div className="absolute pointer-events-none" style={{ left: p.x - 26, top: p.y - 26, width: 52, height: 52 }}>
+                        <div className="absolute inset-0 rounded-full motion-safe:animate-ping" style={{ border: `3px solid ${C.gold}` }} />
+                        <div className="absolute inset-0 rounded-full" style={{ border: `3px solid ${C.gold}` }} />
+                      </div>
+                    );
+                  })()}
                 </div>
                 </div>
 
                 {/* ---- On-map controls ---- */}
+                {movingItem && (
+                  <div
+                    data-map-control
+                    className="absolute left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-full pl-3 pr-1 py-1 text-xs font-medium shadow-md max-w-[90%]"
+                    style={{ bottom: mapFullscreen ? "calc(max(16px, env(safe-area-inset-bottom)) + 52px)" : 64, backgroundColor: C.gold, color: "#fff" }}
+                  >
+                    <span className="truncate">Tap where {movingItem.label} should go</span>
+                    <button
+                      onClick={() => setMovingItem(null)}
+                      className="rounded-full px-2.5 py-1 text-[11px] font-semibold shrink-0"
+                      style={{ backgroundColor: "rgba(255,255,255,0.2)" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {mapSearchOpen && (
+                  <div
+                    data-map-control
+                    className="absolute z-30 rounded-xl border shadow-lg overflow-hidden"
+                    style={{
+                      top: mapFullscreen ? "max(12px, env(safe-area-inset-top))" : 12,
+                      left: 12,
+                      right: 64,
+                      maxWidth: 360,
+                      borderColor: C.line,
+                      backgroundColor: C.card,
+                    }}
+                  >
+                    <div className="flex items-center gap-2 px-3 h-10">
+                      <Search size={14} style={{ color: C.muted }} />
+                      <input
+                        autoFocus
+                        value={mapSearchQuery}
+                        onChange={(e) => setMapSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && mapSearchResults[0]) showGuestOnMap(mapSearchResults[0].guest.id);
+                          if (e.key === "Escape") setMapSearchOpen(false);
+                        }}
+                        placeholder="Find a guest…"
+                        aria-label="Find a guest on the map"
+                        className="flex-1 min-w-0 bg-transparent outline-none text-sm"
+                        style={{ color: C.ink, userSelect: "text", WebkitUserSelect: "text" }}
+                      />
+                      <button onClick={() => setMapSearchOpen(false)} aria-label="Close search" style={{ color: C.muted }}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                    {mapSearchQuery.trim() && (
+                      <div className="border-t max-h-64 overflow-y-auto" style={{ borderColor: C.line }}>
+                        {mapSearchResults.length === 0 ? (
+                          <div className="px-3 py-2.5 text-xs" style={{ color: C.muted }}>
+                            No guests match &quot;{mapSearchQuery.trim()}&quot;.
+                          </div>
+                        ) : (
+                          mapSearchResults.map(({ guest, seatId }) => (
+                            <button
+                              key={guest.id}
+                              onClick={() => showGuestOnMap(guest.id)}
+                              className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left text-sm border-b last:border-b-0"
+                              style={{ borderColor: C.line, color: C.ink }}
+                            >
+                              <span className="truncate">{guest.name}</span>
+                              <span className="shrink-0 text-xs" style={{ color: seatId ? C.gold : C.muted }}>
+                                {seatId && seatsById[seatId] ? tableById[seatsById[seatId].tableId]?.label ?? "Seated" : readOnly ? "Not seated" : "Not seated · tap to seat"}
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {picked && guestById[picked] && (
                   <div
                     data-map-control
@@ -4993,6 +5255,24 @@ export default function SeatingPlanner({
                   {mapFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
                 </button>
 
+                <button
+                  data-map-control
+                  onClick={() => setMapSearchOpen((v) => !v)}
+                  aria-label="Find a guest on the map"
+                  title="Find a guest"
+                  className="absolute w-10 h-10 rounded-xl border flex items-center justify-center shadow-sm"
+                  style={{
+                    top: mapFullscreen ? "calc(max(12px, env(safe-area-inset-top)) + 48px)" : 60,
+                    right: 12,
+                    borderColor: C.line,
+                    backgroundColor: mapSearchOpen ? C.ink : C.card,
+                    color: mapSearchOpen ? C.paper : C.ink,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Search size={17} />
+                </button>
+
                 <div
                   data-map-control
                   className="absolute flex flex-col rounded-xl border overflow-hidden shadow-sm"
@@ -5025,7 +5305,7 @@ export default function SeatingPlanner({
                   </button>
                   <div style={{ height: 1, backgroundColor: C.line }} />
                   <button
-                    onClick={map.fit}
+                    onClick={() => map.fit()}
                     aria-label="Show the whole room"
                     title="Show the whole room"
                     className="w-10 h-10 flex items-center justify-center text-[10px] font-semibold uppercase tracking-wide"
@@ -5174,5 +5454,36 @@ export default function SeatingPlanner({
         onApply={applyAgentOperations}
       />
     </div>
+  );
+}
+
+// One button in a table/fixture's on-map selection menu. Sized for fingers
+// (36px tall, on-screen size independent of zoom since the menu is counter-scaled).
+function MapMenuButton({
+  icon,
+  label,
+  onClick,
+  hideLabel = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  hideLabel?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      aria-label={label}
+      title={label}
+      className="h-9 flex items-center justify-center gap-1.5 rounded-full text-xs font-semibold whitespace-nowrap"
+      style={{ color: "#F7F3EA", minWidth: 36, padding: hideLabel ? 0 : "0 12px" }}
+    >
+      {icon}
+      {!hideLabel && label}
+    </button>
   );
 }

@@ -5,13 +5,20 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 // Google-Maps-style viewport for the seating floor plan.
 //
 // The floor plan itself is still laid out in plain "room pixels" by computeLayout;
-// this hook just decides how that room is shown inside a fixed-size window:
-// a translate + scale applied to the content. It opens on a whole-room overview
-// and lets people zoom and pan from there:
+// this hook decides how that room is shown inside a fixed-size window: a
+// translate + scale on the content layer. It opens on a whole-room overview and
+// lets people zoom and pan from there:
 //   - touch: one finger drags the room, two fingers pinch-zoom, double-tap zooms in
 //   - mouse: drag empty floor to pan, ctrl/⌘ + wheel (or trackpad pinch) zooms,
 //     plain wheel / two-finger trackpad scroll pans, double-click zooms in
-//   - buttons: zoomBy() and fit() for the on-screen +, − and Fit controls
+//   - keyboard (map focused): arrows pan, + / − zoom, 0 shows the whole room
+//   - code: fit(), zoomBy(), flyTo() — animated unless the user prefers reduced motion
+//
+// Performance: while a gesture or animation is running, the transform is written
+// straight onto the content layer's DOM node every frame — React doesn't
+// re-render the (large) planner for each frame. The React-visible `view` is only
+// updated ("committed") when the movement settles, for the bits of UI that care
+// about the zoom level (the % readout, names-vs-dots, counter-scaled menus).
 //
 // Tables, fixtures and seats mark themselves with data-map-item. A mouse press on
 // one of those is left alone (it drags the table, as before). Touches always
@@ -24,18 +31,48 @@ export type View = { x: number; y: number; scale: number };
 const MAX_SCALE = 3;
 const PAN_THRESHOLD = 6; // px of finger travel before a touch counts as a pan, not a tap
 const FIT_PADDING = 16;
+const ANIM_MS = 260;
+
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 export function useMapViewport(contentWidth: number, contentHeight: number) {
-  // Callback ref (not useRef) so measuring and the wheel listener re-attach
-  // whenever the map is shown again after switching tabs or views.
+  // Callback refs (not useRef) so measuring, the wheel listener and the transform
+  // re-attach whenever the map is shown again after switching tabs or views.
   const [viewportEl, setViewportEl] = useState<HTMLDivElement | null>(null);
   const elRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useCallback((el: HTMLDivElement | null) => {
     elRef.current = el;
     setViewportEl(el);
   }, []);
+
   const [view, setViewState] = useState<View>({ x: 0, y: 0, scale: 1 });
   const viewRef = useRef(view);
+  const contentEl = useRef<HTMLDivElement | null>(null);
+
+  const applyTransform = useCallback((v: View) => {
+    const el = contentEl.current;
+    if (el) el.style.transform = `translate3d(${v.x}px, ${v.y}px, 0) scale(${v.scale})`;
+  }, []);
+  const contentRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      contentEl.current = el;
+      if (el) {
+        el.style.transformOrigin = "0 0";
+        el.style.willChange = "transform";
+        applyTransform(viewRef.current);
+      }
+    },
+    [applyTransform]
+  );
+
   const [size, setSize] = useState({ width: 0, height: 0 });
 
   // Once someone pans or zooms by hand we stop auto-fitting, so the view doesn't
@@ -47,11 +84,62 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
   // also count as "tap this seat".
   const suppressClick = useRef(false);
 
-  const setView = useCallback((v: View) => {
-    viewRef.current = v;
-    setViewState(v);
+  // commit=false: move the picture only (mid-gesture). commit=true: also tell React.
+  const setView = useCallback(
+    (v: View, commit: boolean) => {
+      viewRef.current = v;
+      applyTransform(v);
+      if (commit) setViewState(v);
+    },
+    [applyTransform]
+  );
+  const commitView = useCallback(() => setViewState(viewRef.current), []);
+
+  // ---- Animation ----
+  const animFrame = useRef<number | null>(null);
+  const stopAnimation = useCallback(() => {
+    if (animFrame.current != null) {
+      cancelAnimationFrame(animFrame.current);
+      animFrame.current = null;
+      commitView();
+    }
+  }, [commitView]);
+
+  const animateTo = useCallback(
+    (target: View) => {
+      if (animFrame.current != null) cancelAnimationFrame(animFrame.current);
+      animFrame.current = null;
+      const from = viewRef.current;
+      if (prefersReducedMotion()) {
+        setView(target, true);
+        return;
+      }
+      const start = performance.now();
+      // Interpolate zoom in log space so zooming in and out feel equally paced.
+      const logFrom = Math.log(from.scale);
+      const logTo = Math.log(target.scale);
+      const step = (now: number) => {
+        const t = Math.min(1, (now - start) / ANIM_MS);
+        const k = easeOutCubic(t);
+        setView(
+          {
+            scale: Math.exp(logFrom + (logTo - logFrom) * k),
+            x: from.x + (target.x - from.x) * k,
+            y: from.y + (target.y - from.y) * k,
+          },
+          t === 1
+        );
+        animFrame.current = t < 1 ? requestAnimationFrame(step) : null;
+      };
+      animFrame.current = requestAnimationFrame(step);
+    },
+    [setView]
+  );
+  useEffect(() => () => {
+    if (animFrame.current != null) cancelAnimationFrame(animFrame.current);
   }, []);
 
+  // ---- Geometry ----
   const fitScale = useCallback(() => {
     if (!size.width || !size.height || !contentWidth || !contentHeight) return 1;
     return Math.min(
@@ -84,33 +172,83 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
     [size.width, size.height, contentWidth, contentHeight]
   );
 
-  const fit = useCallback(() => {
-    userAdjusted.current = false;
-    if (!size.width || !size.height) return;
+  const fitView = useCallback((): View | null => {
+    if (!size.width || !size.height) return null;
     const scale = fitScale();
-    setView({
+    return {
       scale,
       x: (size.width - contentWidth * scale) / 2,
       y: (size.height - contentHeight * scale) / 2,
-    });
-  }, [size.width, size.height, contentWidth, contentHeight, fitScale, setView]);
+    };
+  }, [size.width, size.height, contentWidth, contentHeight, fitScale]);
 
-  // Zoom so the room point under (px, py) — viewport coordinates — stays put.
-  const zoomAt = useCallback(
-    (px: number, py: number, nextScale: number, from: View = viewRef.current) => {
+  // Show the whole room. animate=false for the automatic fit on load/resize.
+  const fit = useCallback(
+    (animate = true) => {
+      userAdjusted.current = false;
+      const target = fitView();
+      if (!target) return;
+      if (animate) animateTo(target);
+      else {
+        stopAnimation();
+        setView(target, true);
+      }
+    },
+    [fitView, animateTo, stopAnimation, setView]
+  );
+
+  // The view that zooms to nextScale while keeping room point under (px, py) — viewport coordinates — put.
+  const zoomedView = useCallback(
+    (px: number, py: number, nextScale: number, from: View = viewRef.current): View => {
       const scale = clampScale(nextScale);
       const roomX = (px - from.x) / from.scale;
       const roomY = (py - from.y) / from.scale;
-      userAdjusted.current = true;
-      setView(clampPan({ scale, x: px - roomX * scale, y: py - roomY * scale }));
+      return clampPan({ scale, x: px - roomX * scale, y: py - roomY * scale });
     },
-    [clampScale, clampPan, setView]
+    [clampScale, clampPan]
   );
 
   const zoomBy = useCallback(
-    (factor: number) => zoomAt(size.width / 2, size.height / 2, viewRef.current.scale * factor),
-    [zoomAt, size.width, size.height]
+    (factor: number) => {
+      userAdjusted.current = true;
+      // Chain from where an in-flight animation is heading would be nicer, but
+      // starting from the current frame is predictable and good enough.
+      animateTo(zoomedView(size.width / 2, size.height / 2, viewRef.current.scale * factor));
+    },
+    [animateTo, zoomedView, size.width, size.height]
   );
+
+  const panBy = useCallback(
+    (dx: number, dy: number) => {
+      userAdjusted.current = true;
+      const v = viewRef.current;
+      animateTo(clampPan({ scale: v.scale, x: v.x + dx, y: v.y + dy }));
+    },
+    [animateTo, clampPan]
+  );
+
+  // Fly so a room-space box (centre cx, cy; size w × h) fills the window, zoomed
+  // in no further than maxScale and no less than minZoom.
+  const flyTo = useCallback(
+    (cx: number, cy: number, w: number, h: number, opts: { maxScale?: number; minZoom?: number } = {}) => {
+      if (!size.width || !size.height) return;
+      userAdjusted.current = true;
+      const fitBox = Math.min((size.width - FIT_PADDING * 2) / w, (size.height - FIT_PADDING * 2) / h);
+      const scale = clampScale(Math.max(opts.minZoom ?? 0, Math.min(opts.maxScale ?? 1.4, fitBox)));
+      animateTo(clampPan({ scale, x: size.width / 2 - cx * scale, y: size.height / 2 - cy * scale }));
+    },
+    [size.width, size.height, clampScale, clampPan, animateTo]
+  );
+
+  // Screen point → room coordinates (for "tap where the table should go").
+  const toRoom = useCallback((clientX: number, clientY: number) => {
+    const rect = elRef.current?.getBoundingClientRect();
+    const v = viewRef.current;
+    return {
+      x: (clientX - (rect?.left ?? 0) - v.x) / v.scale,
+      y: (clientY - (rect?.top ?? 0) - v.y) / v.scale,
+    };
+  }, []);
 
   // Track the window's size.
   useLayoutEffect(() => {
@@ -134,7 +272,7 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
 
   // Whole-room overview until the user takes over.
   useEffect(() => {
-    if (!userAdjusted.current) fit();
+    if (!userAdjusted.current) fit(false);
   }, [fit]);
 
   // ---- Pointer gestures (pan + pinch) ----
@@ -177,6 +315,7 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
     // Mouse on a table/seat: that element handles it (drag table, drag guest).
     if (e.pointerType === "mouse" && (onItem || e.button !== 0)) return;
 
+    stopAnimation(); // grabbing the map mid-glide catches it where it is
     const p = localPoint(e.clientX, e.clientY);
     pointers.current.set(e.pointerId, p);
     if (e.pointerType === "mouse") elRef.current?.setPointerCapture(e.pointerId);
@@ -207,7 +346,7 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
       const roomY = (g.startMidY - g.from.y) / g.from.scale;
       userAdjusted.current = true;
       suppressClick.current = true;
-      setView(clampPan({ scale, x: midX - roomX * scale, y: midY - roomY * scale }));
+      setView(clampPan({ scale, x: midX - roomX * scale, y: midY - roomY * scale }), false);
       return;
     }
 
@@ -218,7 +357,7 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
       g.moved = true;
       userAdjusted.current = true;
       suppressClick.current = true;
-      setView(clampPan({ scale: g.from.scale, x: g.from.x + dx, y: g.from.y + dy }));
+      setView(clampPan({ scale: g.from.scale, x: g.from.x + dx, y: g.from.y + dy }), false);
     }
   };
 
@@ -239,7 +378,8 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
       const now = Date.now();
       const prev = lastTap.current;
       if (prev && now - prev.t < 320 && Math.hypot(prev.x - p.x, prev.y - p.y) < 30) {
-        zoomAt(p.x, p.y, viewRef.current.scale * 2);
+        userAdjusted.current = true;
+        animateTo(zoomedView(p.x, p.y, viewRef.current.scale * 2));
         lastTap.current = null;
       } else {
         lastTap.current = { t: now, x: p.x, y: p.y };
@@ -252,6 +392,7 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
       if (gesture.current?.kind === "pan") gesture.current.moved = true;
     } else if (pointers.current.size === 0) {
       gesture.current = null;
+      if (animFrame.current == null) commitView();
       // suppressClick stays set until the click it's meant to swallow arrives
       // (onClickCapture) or the next gesture begins (onPointerDown).
     }
@@ -265,27 +406,68 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
     }
   };
 
+  // Keyboard, when the map itself has focus (not a table-name field inside it).
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== elRef.current) return;
+    const step = e.shiftKey ? 240 : 80;
+    switch (e.key) {
+      case "ArrowLeft":
+        panBy(step, 0);
+        break;
+      case "ArrowRight":
+        panBy(-step, 0);
+        break;
+      case "ArrowUp":
+        panBy(0, step);
+        break;
+      case "ArrowDown":
+        panBy(0, -step);
+        break;
+      case "+":
+      case "=":
+        zoomBy(1.4);
+        break;
+      case "-":
+      case "_":
+        zoomBy(1 / 1.4);
+        break;
+      case "0":
+        fit();
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+  };
+
   // Wheel needs a non-passive native listener so it can stop the page scrolling.
+  const wheelCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const el = viewportEl;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      stopAnimation();
       const p = localPoint(e.clientX, e.clientY);
+      userAdjusted.current = true;
       if (e.ctrlKey || e.metaKey) {
         // Trackpad pinch arrives as ctrl+wheel with small deltas; mouse wheel + ctrl has big ones.
         const factor = Math.exp(-e.deltaY * (Math.abs(e.deltaY) < 50 ? 0.01 : 0.002));
-        zoomAt(p.x, p.y, viewRef.current.scale * factor);
+        setView(zoomedView(p.x, p.y, viewRef.current.scale * factor), false);
       } else {
         const v = viewRef.current;
-        userAdjusted.current = true;
-        setView(clampPan({ scale: v.scale, x: v.x - e.deltaX, y: v.y - e.deltaY }));
+        setView(clampPan({ scale: v.scale, x: v.x - e.deltaX, y: v.y - e.deltaY }), false);
       }
+      if (wheelCommitTimer.current) clearTimeout(wheelCommitTimer.current);
+      wheelCommitTimer.current = setTimeout(commitView, 150);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (wheelCommitTimer.current) clearTimeout(wheelCommitTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewportEl, zoomAt, clampPan, setView]);
+  }, [viewportEl, zoomedView, clampPan, setView, stopAnimation, commitView]);
 
   // Table/fixture drags call these so their pixel deltas account for zoom, and so
   // the room doesn't pan while a table is being carried.
@@ -301,10 +483,14 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
 
   return {
     viewportRef,
+    contentRef,
+    /** Settled view — updates when a gesture or animation ends, not every frame. */
     view,
     size,
     fit,
     zoomBy,
+    flyTo,
+    toRoom,
     beginItemDrag,
     endItemDrag,
     getScale,
@@ -316,6 +502,7 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
       onPointerUp: endPointer,
       onPointerCancel: endPointer,
       onClickCapture,
+      onKeyDown,
     },
   };
 }
