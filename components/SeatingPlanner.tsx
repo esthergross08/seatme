@@ -1201,6 +1201,17 @@ export default function SeatingPlanner({
     setCanvasBudget((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
   }, [map.size.width, map.size.height]);
 
+  // Name tags are only legible once you're zoomed in, so at the whole-room view the
+  // map shows compact dots and switches to names as you zoom in — like labels
+  // appearing on a map. Two thresholds so it doesn't flicker right at the switch.
+  // The "Hide names" button still turns names off at every zoom level.
+  const [zoomedInForNames, setZoomedInForNames] = useState(true);
+  const mapScale = map.view.scale;
+  useEffect(() => {
+    setZoomedInForNames((prev) => (prev ? mapScale >= 0.7 : mapScale >= 0.8));
+  }, [mapScale]);
+  const namesOnMap = showGuestNames && zoomedInForNames;
+
   // Entering/leaving full screen goes back to the whole-room overview at the new size.
   const fitMap = map.fit;
   useEffect(() => {
@@ -4222,7 +4233,7 @@ export default function SeatingPlanner({
                   <span className="inline-block rounded" style={{ width: 14, height: 10, border: `1.5px solid ${C.wine}`, backgroundColor: "#fff" }} />
                   Rule conflict
                 </span>
-                {showGuestNames && (
+                {namesOnMap && (
                   <span className="flex items-center gap-1.5">
                     <span className="inline-block rounded-full" style={{ width: 7, height: 7, backgroundColor: "#000" }} />
                     Has a note
@@ -4231,7 +4242,7 @@ export default function SeatingPlanner({
                 {groups.length > 0 && (
                   <span className="flex items-center gap-1.5">
                     <span className="inline-block rounded-full" style={{ width: 7, height: 7, backgroundColor: C.muted }} />
-                    {showGuestNames ? "Group color" : "Group color (dot fill)"}
+                    {namesOnMap ? "Group color" : "Group color (dot fill)"}
                   </span>
                 )}
                 <span className="flex items-center gap-1.5 basis-full sm:basis-auto sm:ml-auto">
@@ -4403,7 +4414,7 @@ export default function SeatingPlanner({
                     // layout. Threshold is intentionally below 68 (not just under it) so
                     // ordinary tables — even fairly full 8-tops — keep the familiar
                     // horizontal tag; only genuinely crowded tables switch.
-                    const tagsCrowded = showGuestNames && minSeatSpacing(t.shape, pos.w, pos.h, t.capacity, 34, t.headCount, t.footCount) < 64;
+                    const tagsCrowded = namesOnMap && minSeatSpacing(t.shape, pos.w, pos.h, t.capacity, 34, t.headCount, t.footCount) < 64;
                     const beginTableDrag = (startClientX: number, startClientY: number) => {
                       const startX = basePos.cx;
                       const startY = basePos.cy;
@@ -4622,12 +4633,12 @@ export default function SeatingPlanner({
                               : seatRoles && seatRoles.footIdxs.includes(i)
                               ? "Foot"
                               : null;
-                          const boxW = showGuestNames ? (tagsCrowded ? 22 : 68) : 16;
+                          const boxW = namesOnMap ? (tagsCrowded ? 22 : 68) : 16;
                           // Crowded (rotated) tags were capped at 58px tall — only room for
                           // a handful of characters before the ellipsis kicked in, so most
                           // full names were unreadable. 100px gives a rotated tag roughly
                           // twice the text room.
-                          const boxH = showGuestNames ? (tagsCrowded ? 100 : 30) : 16;
+                          const boxH = namesOnMap ? (tagsCrowded ? 100 : 30) : 16;
                           return (
                             <div key={seatId} data-map-item className="absolute" style={{ left: x - boxW / 2, top: y - boxH / 2 }}>
                             {seatRoleLabel && (
@@ -4662,7 +4673,7 @@ export default function SeatingPlanner({
                               onDragStart={(e) => guestId && handleDragStart(e, guestId)}
                               className="absolute flex items-center justify-center text-center cursor-pointer transition-transform hover:scale-110"
                               style={
-                                showGuestNames
+                                namesOnMap
                                   ? {
                                       left: 0,
                                       top: 0,
@@ -4688,7 +4699,7 @@ export default function SeatingPlanner({
                               }
                               title={guestName ? (guestNote ? `${guestName} — ${guestNote}` : guestName) : "Empty seat"}
                             >
-                              {showGuestNames && guestGroupColor && (
+                              {namesOnMap && guestGroupColor && (
                                 <span
                                   className="absolute rounded-full"
                                   style={{
@@ -4701,7 +4712,7 @@ export default function SeatingPlanner({
                                   }}
                                 />
                               )}
-                              {showGuestNames && guestNote && (
+                              {namesOnMap && guestNote && (
                                 <span
                                   className="absolute rounded-full"
                                   style={{
@@ -4714,7 +4725,7 @@ export default function SeatingPlanner({
                                   }}
                                 />
                               )}
-                              {showGuestNames ? (
+                              {namesOnMap ? (
                                 // Crowded tags use a CSS rotate transform rather than
                                 // writing-mode: vertical-rl — html2canvas (used for the PDF
                                 // export) rasterizes transforms reliably but doesn't render
@@ -4856,6 +4867,7 @@ export default function SeatingPlanner({
                   }}
                 >
                   {Math.round(map.view.scale * 100)}%
+                  {showGuestNames && !zoomedInForNames && " · zoom in to see names"}
                 </div>
               </div>
             ) : (
