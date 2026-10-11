@@ -28,6 +28,10 @@ import {
   EyeOff,
   ClipboardCheck,
   Copy,
+  Minus,
+  Maximize2,
+  Minimize2,
+  Move,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -35,6 +39,7 @@ import { createClient } from "@/lib/supabase/client";
 import InviteForm from "./InviteForm";
 import AgentChat from "./AgentChat";
 import DecorPanel from "./DecorPanel";
+import { useMapViewport } from "./useMapViewport";
 import type { AgentOperation, AgentApplyResult } from "@/lib/agentOperations";
 import {
   getPosterLayout,
@@ -1080,35 +1085,13 @@ export default function SeatingPlanner({
   const [rsvpLinkCopied, setRsvpLinkCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mapCaptureRef = useRef<HTMLDivElement>(null);
-  const mapContainerRef = useRef<HTMLDivElement>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
-  // How much on-screen room the map actually has, so table auto-scaling (below) can grow
-  // tables to fill it without overshooting into "now I have to scroll to see half the
-  // guests" — which defeats the point of making a table bigger in the first place.
-  // Width comes from the container's own box; height is viewport-relative (the container
-  // has no fixed height of its own, it just grows to fit whatever we draw), so it's based
-  // on how much vertical space is left below the container's current position.
+  // How much on-screen room the map window has, so table auto-scaling (computeLayout)
+  // can grow a small plan's tables to fill it. Set from the zoomable map viewport's
+  // measured size, further down, once the layout exists.
   const [canvasBudget, setCanvasBudget] = useState({ width: 0, height: 0 });
-  useEffect(() => {
-    const el = mapContainerRef.current;
-    if (!el || seatingView !== "map") return;
-    function measure() {
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const width = Math.max(320, el.clientWidth - 48); // minus the container's own p-6 padding
-      const height = Math.max(320, window.innerHeight - rect.top - 140); // leave room below for comfort
-      setCanvasBudget((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
-    }
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    window.addEventListener("resize", measure);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  }, [seatingView]);
+  const [mapFullscreen, setMapFullscreen] = useState(false);
 
   // ---- Supabase autosave ----
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -1207,6 +1190,71 @@ export default function SeatingPlanner({
     () => computeLayout(visibleTables, tablePositions, canvasBudget),
     [visibleTables, tablePositions, canvasBudget]
   );
+
+  // Zoom/pan window around the floor plan — opens on the whole room, pinch or
+  // scroll to zoom in (see useMapViewport).
+  const map = useMapViewport(layout.width, layout.height);
+  useEffect(() => {
+    if (!map.size.width || !map.size.height) return;
+    const width = Math.max(320, map.size.width - 32);
+    const height = Math.max(320, map.size.height - 32);
+    setCanvasBudget((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+  }, [map.size.width, map.size.height]);
+
+  // Entering/leaving full screen goes back to the whole-room overview at the new size.
+  const fitMap = map.fit;
+  useEffect(() => {
+    fitMap();
+    // Only on toggle — fitMap changes identity whenever the size does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapFullscreen]);
+
+  // Esc leaves full-screen map; the page behind doesn't scroll while it's open.
+  useEffect(() => {
+    if (!mapFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMapFullscreen(false);
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [mapFullscreen]);
+
+  // On touch screens a table only picks up after a short press-and-hold, so a
+  // quick swipe across the room pans the map instead of dragging tables around.
+  function startLongPress(e: React.TouchEvent, begin: (clientX: number, clientY: number) => void) {
+    const touch = e.touches[0];
+    if (!touch || e.touches.length > 1) return;
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    const timer = window.setTimeout(() => {
+      cleanup();
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      try {
+        navigator.vibrate?.(12);
+      } catch {
+        // vibration unsupported — fine
+      }
+      begin(startX, startY);
+    }, 380);
+    function onMove(ev: TouchEvent) {
+      const t = ev.touches[0];
+      if (ev.touches.length > 1 || !t || Math.hypot(t.clientX - startX, t.clientY - startY) > 8) cleanup();
+    }
+    function cleanup() {
+      window.clearTimeout(timer);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", cleanup);
+      window.removeEventListener("touchcancel", cleanup);
+    }
+    window.addEventListener("touchmove", onMove);
+    window.addEventListener("touchend", cleanup);
+    window.addEventListener("touchcancel", cleanup);
+  }
 
   const guestById = useMemo(() => Object.fromEntries(guests.map((g) => [g.id, g])), [guests]);
   const visibleGuests = useMemo(() => {
@@ -4186,16 +4234,43 @@ export default function SeatingPlanner({
                     {showGuestNames ? "Group color" : "Group color (dot fill)"}
                   </span>
                 )}
+                <span className="flex items-center gap-1.5 basis-full sm:basis-auto sm:ml-auto">
+                  <Move size={11} />
+                  Pinch or Ctrl+scroll to zoom · drag the floor to move around{readOnly ? "" : " · press and hold a table to move it"}
+                </span>
               </div>
             )}
 
             {seatingView === "map" ? (
               <div
-                ref={mapContainerRef}
-                className="relative rounded-2xl border p-6 overflow-auto"
-                style={{ borderColor: C.line, backgroundColor: "#FCFAF4" }}
+                ref={map.viewportRef}
+                {...map.handlers}
                 onDragOver={(e) => e.preventDefault()}
+                className={mapFullscreen ? "fixed inset-0 z-[60] overflow-hidden" : "relative rounded-2xl border overflow-hidden"}
+                style={{
+                  borderColor: C.line,
+                  backgroundColor: "#FCFAF4",
+                  // Big enough to work in on a phone, but leaves a strip of page to
+                  // scroll past it (the map itself captures swipes for panning).
+                  ...(mapFullscreen ? {} : { height: "min(78dvh, 900px)", minHeight: 360 }),
+                  touchAction: "none",
+                  overscrollBehavior: "contain",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                  WebkitTouchCallout: "none",
+                  cursor: "grab",
+                }}
+                // Long-press on a phone would otherwise pop the browser's context menu.
+                onContextMenu={(e) => e.preventDefault()}
               >
+                <div
+                  className="absolute left-0 top-0"
+                  style={{
+                    transform: `translate3d(${map.view.x}px, ${map.view.y}px, 0) scale(${map.view.scale})`,
+                    transformOrigin: "0 0",
+                    willChange: "transform",
+                  }}
+                >
                 <div ref={mapCaptureRef} className="relative" style={{ width: layout.width, height: layout.height, minWidth: layout.width }}>
                   <svg className="absolute inset-0 pointer-events-none" width={layout.width} height={layout.height}>
                     {flatViolations
@@ -4229,9 +4304,13 @@ export default function SeatingPlanner({
                     const beginFixtureDrag = (startClientX: number, startClientY: number) => {
                       const startX = pos.cx;
                       const startY = pos.cy;
+                      // Screen pixels → room pixels at the current zoom.
+                      const zoom = map.getScale();
+                      map.beginItemDrag();
+                      setDragFixture({ id: f.id, x: startX, y: startY });
                       const compute = (clientX: number, clientY: number) => ({
-                        x: Math.max(def.w / 2, startX + (clientX - startClientX)),
-                        y: Math.max(def.h / 2, startY + (clientY - startClientY)),
+                        x: Math.max(def.w / 2, startX + (clientX - startClientX) / zoom),
+                        y: Math.max(def.h / 2, startY + (clientY - startClientY) / zoom),
                       });
                       const onMouseMove = (ev: MouseEvent) => setDragFixture({ id: f.id, ...compute(ev.clientX, ev.clientY) });
                       const onMouseUp = (ev: MouseEvent) => {
@@ -4255,6 +4334,7 @@ export default function SeatingPlanner({
                       };
                       function cleanup() {
                         setDragFixture(null);
+                        map.endItemDrag();
                         window.removeEventListener("mousemove", onMouseMove);
                         window.removeEventListener("mouseup", onMouseUp);
                         window.removeEventListener("touchmove", onTouchMove);
@@ -4272,13 +4352,12 @@ export default function SeatingPlanner({
                     };
                     const startFixtureDragTouch = (e: React.TouchEvent) => {
                       if (readOnly) return;
-                      const touch = e.touches[0];
-                      if (!touch) return;
-                      beginFixtureDrag(touch.clientX, touch.clientY);
+                      startLongPress(e, beginFixtureDrag);
                     };
                     return (
                       <div
                         key={f.id}
+                        data-map-item
                         onMouseDown={startFixtureDrag}
                         onTouchStart={startFixtureDragTouch}
                         className="absolute flex items-center justify-center text-center px-2 group"
@@ -4329,9 +4408,13 @@ export default function SeatingPlanner({
                       const startX = basePos.cx;
                       const startY = basePos.cy;
                       const minCoord = basePos.seatR + 10;
+                      // Screen pixels → room pixels at the current zoom.
+                      const zoom = map.getScale();
+                      map.beginItemDrag();
+                      setDragTable({ id: t.id, x: startX, y: startY });
                       const compute = (clientX: number, clientY: number) => ({
-                        x: Math.max(minCoord, startX + (clientX - startClientX)),
-                        y: Math.max(minCoord, startY + (clientY - startClientY)),
+                        x: Math.max(minCoord, startX + (clientX - startClientX) / zoom),
+                        y: Math.max(minCoord, startY + (clientY - startClientY) / zoom),
                       });
                       const onMouseMove = (ev: MouseEvent) => setDragTable({ id: t.id, ...compute(ev.clientX, ev.clientY) });
                       const onMouseUp = (ev: MouseEvent) => {
@@ -4355,6 +4438,7 @@ export default function SeatingPlanner({
                       };
                       function cleanup() {
                         setDragTable(null);
+                        map.endItemDrag();
                         window.removeEventListener("mousemove", onMouseMove);
                         window.removeEventListener("mouseup", onMouseUp);
                         window.removeEventListener("touchmove", onTouchMove);
@@ -4372,9 +4456,7 @@ export default function SeatingPlanner({
                     };
                     const startTableDragTouch = (e: React.TouchEvent) => {
                       if (readOnly) return;
-                      const touch = e.touches[0];
-                      if (!touch) return;
-                      beginTableDrag(touch.clientX, touch.clientY);
+                      startLongPress(e, beginTableDrag);
                     };
 
                     // Resizing changes how big the table *renders*, not its seat count —
@@ -4390,10 +4472,12 @@ export default function SeatingPlanner({
                     const currentSizeScale = t.sizeScale;
                     const beginTableResize = (startClientX: number) => {
                       const startScale = currentSizeScale;
+                      const zoom = map.getScale();
+                      map.beginItemDrag();
                       setResizingGroupId(t.groupId);
                       setResizePreviewScale(startScale);
                       const compute = (clientX: number) => {
-                        const delta = (clientX - startClientX) / 160;
+                        const delta = (clientX - startClientX) / zoom / 160;
                         return Math.round(Math.max(0.5, Math.min(2.5, startScale + delta)) * 100) / 100;
                       };
                       const onMouseMove = (ev: MouseEvent) => setResizePreviewScale(compute(ev.clientX));
@@ -4419,6 +4503,7 @@ export default function SeatingPlanner({
                       function cleanup() {
                         setResizingGroupId(null);
                         setResizePreviewScale(null);
+                        map.endItemDrag();
                         window.removeEventListener("mousemove", onMouseMove);
                         window.removeEventListener("mouseup", onMouseUp);
                         window.removeEventListener("touchmove", onTouchMove);
@@ -4442,10 +4527,12 @@ export default function SeatingPlanner({
                     return (
                       <div key={t.id} className="group">
                         <div
+                          data-map-item
                           onMouseDown={startTableDrag}
                           onTouchStart={startTableDragTouch}
                           className="absolute border-2 flex items-center justify-center text-center px-2"
                           style={{
+                            boxShadow: dragTable?.id === t.id ? "0 8px 22px rgba(34,31,43,0.22)" : undefined,
                             left: renderPos.cx - renderPos.w / 2,
                             top: renderPos.cy - renderPos.h / 2,
                             width: renderPos.w,
@@ -4470,7 +4557,6 @@ export default function SeatingPlanner({
                               }
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
-                            onTouchStart={(e) => e.stopPropagation()}
                             disabled={readOnly}
                             title="Click to rename this table"
                             className="text-[11px] font-medium leading-tight text-center bg-transparent outline-none w-full"
@@ -4493,6 +4579,7 @@ export default function SeatingPlanner({
                         </div>
                         {!readOnly && (
                           <div
+                            data-map-item
                             onMouseDown={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
@@ -4542,7 +4629,7 @@ export default function SeatingPlanner({
                           // twice the text room.
                           const boxH = showGuestNames ? (tagsCrowded ? 100 : 30) : 16;
                           return (
-                            <div key={seatId} className="absolute" style={{ left: x - boxW / 2, top: y - boxH / 2 }}>
+                            <div key={seatId} data-map-item className="absolute" style={{ left: x - boxW / 2, top: y - boxH / 2 }}>
                             {seatRoleLabel && (
                               <span
                                 className="absolute text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap"
@@ -4677,6 +4764,98 @@ export default function SeatingPlanner({
                       </div>
                     );
                   })}
+                </div>
+                </div>
+
+                {/* ---- On-map controls ---- */}
+                {picked && guestById[picked] && (
+                  <div
+                    data-map-control
+                    className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full pl-3 pr-1 py-1 text-xs font-medium shadow-md max-w-[90%]"
+                    style={{ top: mapFullscreen ? "max(12px, env(safe-area-inset-top))" : 12, backgroundColor: C.ink, color: C.paper }}
+                  >
+                    <span className="truncate">Tap a seat for {guestById[picked].name}</span>
+                    <button
+                      onClick={() => setPicked(null)}
+                      aria-label="Cancel moving this guest"
+                      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: "rgba(255,255,255,0.15)" }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  data-map-control
+                  onClick={() => setMapFullscreen((v) => !v)}
+                  aria-label={mapFullscreen ? "Exit full screen" : "Full screen map"}
+                  title={mapFullscreen ? "Exit full screen (Esc)" : "Full screen"}
+                  className="absolute w-10 h-10 rounded-xl border flex items-center justify-center shadow-sm"
+                  style={{
+                    top: mapFullscreen ? "max(12px, env(safe-area-inset-top))" : 12,
+                    right: 12,
+                    borderColor: C.line,
+                    backgroundColor: C.card,
+                    color: C.ink,
+                    cursor: "pointer",
+                  }}
+                >
+                  {mapFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+                </button>
+
+                <div
+                  data-map-control
+                  className="absolute flex flex-col rounded-xl border overflow-hidden shadow-sm"
+                  style={{
+                    right: 12,
+                    bottom: mapFullscreen ? "max(16px, env(safe-area-inset-bottom))" : 12,
+                    borderColor: C.line,
+                    backgroundColor: C.card,
+                    cursor: "pointer",
+                  }}
+                >
+                  <button
+                    onClick={() => map.zoomBy(1.4)}
+                    disabled={map.view.scale >= map.maxScale - 0.001}
+                    aria-label="Zoom in"
+                    className="w-10 h-10 flex items-center justify-center disabled:opacity-30"
+                    style={{ color: C.ink }}
+                  >
+                    <Plus size={18} />
+                  </button>
+                  <div style={{ height: 1, backgroundColor: C.line }} />
+                  <button
+                    onClick={() => map.zoomBy(1 / 1.4)}
+                    disabled={map.view.scale <= map.minScale + 0.001}
+                    aria-label="Zoom out"
+                    className="w-10 h-10 flex items-center justify-center disabled:opacity-30"
+                    style={{ color: C.ink }}
+                  >
+                    <Minus size={18} />
+                  </button>
+                  <div style={{ height: 1, backgroundColor: C.line }} />
+                  <button
+                    onClick={map.fit}
+                    aria-label="Show the whole room"
+                    title="Show the whole room"
+                    className="w-10 h-10 flex items-center justify-center text-[10px] font-semibold uppercase tracking-wide"
+                    style={{ color: C.ink }}
+                  >
+                    All
+                  </button>
+                </div>
+
+                <div
+                  className="absolute pointer-events-none text-[10px] font-medium px-2 py-1 rounded-md"
+                  style={{
+                    left: 12,
+                    bottom: mapFullscreen ? "max(16px, env(safe-area-inset-bottom))" : 12,
+                    backgroundColor: "rgba(255,255,255,0.85)",
+                    color: C.muted,
+                  }}
+                >
+                  {Math.round(map.view.scale * 100)}%
                 </div>
               </div>
             ) : (
