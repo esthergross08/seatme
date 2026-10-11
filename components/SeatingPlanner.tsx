@@ -1240,10 +1240,10 @@ export default function SeatingPlanner({
   }, [mapScale]);
   const namesOnMap = showGuestNames && zoomedInForNames;
 
-  // Below this zoom, seats are too small to hit reliably on a phone, so tapping a
-  // table or seat zooms in to that table instead of acting on it.
-  const OVERVIEW_ZOOM = 0.6;
-  const atOverview = map.view.scale < OVERVIEW_ZOOM;
+  // Until names show (~80% zoom), seats are dots too small to hit reliably on a
+  // phone (10–13 px on screen), so tapping a table or seat zooms in to that table
+  // instead of acting on it. Once names show, a name tag is ~58×25 px or larger.
+  const atOverview = !zoomedInForNames;
   function zoomToTable(tableId: string) {
     const pos = layout.positions[tableId];
     if (!pos) return;
