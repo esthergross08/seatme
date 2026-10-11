@@ -41,6 +41,8 @@ interface EventState {
   seatAssignment: SeatAssignmentIn;
   fillMode: "consolidate" | "spread";
   tableNameOverrides?: Record<string, string>;
+  // Individual tables removed from the floor plan — not offered as seating options.
+  deletedTableIds?: string[];
 }
 
 interface ChatTurn {
@@ -68,7 +70,8 @@ function buildTables(tableGroups: TableGroupIn[], nameOverrides: Record<string, 
 }
 
 function buildContext(state: EventState): string {
-  const tables = buildTables(state.tableGroups, state.tableNameOverrides || {});
+  const deleted = new Set(state.deletedTableIds || []);
+  const tables = buildTables(state.tableGroups, state.tableNameOverrides || {}).filter((t) => !deleted.has(t.id));
   const tableById = Object.fromEntries(tables.map((t) => [t.id, t]));
   const seatCountByTable: Record<string, number> = {};
   const guestTableLabel: Record<string, string> = {};

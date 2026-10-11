@@ -223,6 +223,10 @@ interface PlannerData {
   fillMode?: FillMode;
   tableNameOverrides?: Record<string, string>;
   tablePositions?: Record<string, { x: number; y: number }>;
+  // Individual tables taken off the floor plan (e.g. "Round 7" of a group of 10)
+  // without changing the group's count — so they can be added back exactly as
+  // they were, same name and position.
+  deletedTableIds?: string[];
   floorPlan?: FloorPlan | null;
   fixtures?: Fixture[];
   fixturePositions?: Record<string, { x: number; y: number }>;
@@ -1012,6 +1016,11 @@ export default function SeatingPlanner({
   const [fixturePositions, setFixturePositions] = useState<Record<string, { x: number; y: number }>>(
     initialData?.fixturePositions ?? {}
   );
+  const [deletedTableIds, setDeletedTableIds] = useState<string[]>(initialData?.deletedTableIds ?? []);
+  // Table tapped on the map — shows its "Remove table" action.
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+  const [showRemovedTables, setShowRemovedTables] = useState(false);
+  const tableJustDragged = useRef(false);
   const [dragFixture, setDragFixture] = useState<{ id: string; x: number; y: number } | null>(null);
   const [floorPlan, setFloorPlan] = useState<FloorPlan | null>(initialData?.floorPlan ?? null);
   // Layout / color / typography are chosen independently (see lib/posterTemplates.ts).
@@ -1125,6 +1134,7 @@ export default function SeatingPlanner({
             fillMode,
             tableNameOverrides,
             tablePositions,
+            deletedTableIds,
             floorPlan,
             fixtures,
             fixturePositions,
@@ -1156,6 +1166,7 @@ export default function SeatingPlanner({
     fillMode,
     tableNameOverrides,
     tablePositions,
+    deletedTableIds,
     floorPlan,
     fixtures,
     fixturePositions,
@@ -1166,7 +1177,12 @@ export default function SeatingPlanner({
     courses,
   ]);
 
-  const tables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
+  const allTables = useMemo(() => buildTables(tableGroups, tableNameOverrides), [tableGroups, tableNameOverrides]);
+  const deletedTableSet = useMemo(() => new Set(deletedTableIds), [deletedTableIds]);
+  // Everything downstream (seats, capacity, auto-generate, exports, the map) only
+  // ever sees tables that are still on the floor plan.
+  const tables = useMemo(() => allTables.filter((t) => !deletedTableSet.has(t.id)), [allTables, deletedTableSet]);
+  const deletedTables = useMemo(() => allTables.filter((t) => deletedTableSet.has(t.id)), [allTables, deletedTableSet]);
   const tableById = useMemo(() => Object.fromEntries(tables.map((t) => [t.id, t])), [tables]);
   const seats = useMemo(() => buildSeats(tables), [tables]);
   const seatsById = useMemo(() => Object.fromEntries(seats.map((s) => [s.id, s])), [seats]);
@@ -1559,6 +1575,31 @@ export default function SeatingPlanner({
   const moveTable = (tableId: string, x: number, y: number) => {
     if (readOnly) return;
     setTablePositions((m) => ({ ...m, [tableId]: { x, y } }));
+  };
+  // Take one empty table off the floor plan. Its name and position are kept, so
+  // adding it back puts it right where it was. Tables with guests can't be
+  // removed — move or unseat them first — so nobody silently loses a seat.
+  const deleteTableWithUndo = (tableId: string) => {
+    if (readOnly) return;
+    const t = tableById[tableId];
+    if (!t || occupiedTableIds.has(tableId)) return;
+    // Pin it to where it's drawn now, so restoring it doesn't re-flow into a new spot.
+    const pos = layout.positions[tableId];
+    if (pos && !tablePositions[tableId]) {
+      setTablePositions((m) => ({ ...m, [tableId]: { x: pos.cx, y: pos.cy } }));
+    }
+    setDeletedTableIds((ids) => (ids.includes(tableId) ? ids : [...ids, tableId]));
+    setSelectedTableId(null);
+    pushUndo(`Removed ${t.label}.`, () => setDeletedTableIds((ids) => ids.filter((id) => id !== tableId)));
+  };
+  const restoreTable = (tableId: string) => {
+    if (readOnly) return;
+    setDeletedTableIds((ids) => ids.filter((id) => id !== tableId));
+  };
+  const restoreAllTables = () => {
+    if (readOnly) return;
+    setDeletedTableIds([]);
+    setShowRemovedTables(false);
   };
 
   // ---- fixture handlers (non-seating floor plan elements: dance floor, bar, stage) ----
@@ -2481,7 +2522,11 @@ export default function SeatingPlanner({
           case "seat_guest": {
             const g = findGuest(op.guestName);
             if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
-            const table = byName(buildTables(workingTableGroups, tableNameOverrides), (t) => t.label, op.tableLabel || "");
+            const table = byName(
+              buildTables(workingTableGroups, tableNameOverrides).filter((t) => !deletedTableSet.has(t.id)),
+              (t) => t.label,
+              op.tableLabel || ""
+            );
             if (!table) throw new Error(`Couldn't find table "${op.tableLabel}".`);
             const occupied = new Set(Object.keys(workingSeatAssignment));
             const freeSeat = buildSeats([table]).find((s) => !occupied.has(s.id));
@@ -2563,7 +2608,7 @@ export default function SeatingPlanner({
             break;
           }
           case "regenerate_plan": {
-            const workingTables = buildTables(workingTableGroups);
+            const workingTables = buildTables(workingTableGroups).filter((t) => !deletedTableSet.has(t.id));
             let poolTables = workingTables;
             if (fillMode === "consolidate") {
               const chosenIds = pickConsolidatedTables(workingTables, workingGuests.length);
@@ -3191,6 +3236,24 @@ export default function SeatingPlanner({
                   <IconBtn danger title="Remove table type" onClick={() => removeTableGroupWithUndo(g.id)} disabled={readOnly}>
                     <Trash2 size={15} />
                   </IconBtn>
+                  {(() => {
+                    const removed = deletedTables.filter((t) => t.groupId === g.id);
+                    if (removed.length === 0) return null;
+                    return (
+                      <div className="basis-full flex items-center gap-2 text-xs" style={{ color: C.muted }}>
+                        {removed.length} of these removed from the floor plan ({removed.map((t) => t.label).join(", ")})
+                        {!readOnly && (
+                          <button
+                            onClick={() => setDeletedTableIds((ids) => ids.filter((id) => !removed.some((t) => t.id === id)))}
+                            className="font-semibold underline"
+                            style={{ color: C.gold }}
+                          >
+                            Add back
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -4273,6 +4336,11 @@ export default function SeatingPlanner({
                 }}
                 // Long-press on a phone would otherwise pop the browser's context menu.
                 onContextMenu={(e) => e.preventDefault()}
+                // Tapping empty floor clears the selected table.
+                onClick={(e) => {
+                  const el = e.target as HTMLElement;
+                  if (!el.closest("[data-map-item]") && !el.closest("[data-map-control]")) setSelectedTableId(null);
+                }}
               >
                 <div
                   className="absolute left-0 top-0"
@@ -4430,7 +4498,11 @@ export default function SeatingPlanner({
                       const onMouseMove = (ev: MouseEvent) => setDragTable({ id: t.id, ...compute(ev.clientX, ev.clientY) });
                       const onMouseUp = (ev: MouseEvent) => {
                         const p = compute(ev.clientX, ev.clientY);
-                        moveTable(t.id, p.x, p.y);
+                        // A press that barely moved is a click (select the table), not a move.
+                        if (Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) {
+                          tableJustDragged.current = true;
+                          moveTable(t.id, p.x, p.y);
+                        }
                         cleanup();
                       };
                       const onTouchMove = (ev: TouchEvent) => {
@@ -4541,15 +4613,27 @@ export default function SeatingPlanner({
                           data-map-item
                           onMouseDown={startTableDrag}
                           onTouchStart={startTableDragTouch}
+                          onClick={() => {
+                            if (tableJustDragged.current) {
+                              tableJustDragged.current = false;
+                              return;
+                            }
+                            setSelectedTableId(t.id);
+                          }}
                           className="absolute border-2 flex items-center justify-center text-center px-2"
                           style={{
-                            boxShadow: dragTable?.id === t.id ? "0 8px 22px rgba(34,31,43,0.22)" : undefined,
+                            boxShadow:
+                              dragTable?.id === t.id
+                                ? "0 8px 22px rgba(34,31,43,0.22)"
+                                : selectedTableId === t.id
+                                ? `0 0 0 3px ${C.goldSoft}`
+                                : undefined,
                             left: renderPos.cx - renderPos.w / 2,
                             top: renderPos.cy - renderPos.h / 2,
                             width: renderPos.w,
                             height: renderPos.h,
                             borderRadius: shapeRadius(t.shape),
-                            borderColor: C.goldSoft,
+                            borderColor: selectedTableId === t.id ? C.gold : C.goldSoft,
                             backgroundColor: "#fff",
                             cursor: readOnly ? "default" : "move",
                             touchAction: "none",
@@ -4615,6 +4699,40 @@ export default function SeatingPlanner({
                             }}
                           />
                         )}
+                        {selectedTableId === t.id && !readOnly && dragTable?.id !== t.id && (() => {
+                          const seatedHere = occupiedCountByTable[t.id] || 0;
+                          return (
+                            <div
+                              data-map-control
+                              className="absolute z-10"
+                              style={{
+                                left: renderPos.cx,
+                                top: renderPos.cy - renderPos.seatR - 6,
+                                // Constant on-screen size whatever the zoom level.
+                                transform: `translate(-50%, -100%) scale(${1 / map.view.scale})`,
+                                transformOrigin: "50% 100%",
+                              }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                            >
+                              {seatedHere === 0 ? (
+                                <button
+                                  onClick={() => deleteTableWithUndo(t.id)}
+                                  className="flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-xs font-semibold shadow-md"
+                                  style={{ backgroundColor: C.ink, color: C.paper }}
+                                >
+                                  <Trash2 size={13} /> Remove {t.label}
+                                </button>
+                              ) : (
+                                <div
+                                  className="whitespace-nowrap rounded-full px-3 py-2 text-xs font-medium shadow-md"
+                                  style={{ backgroundColor: C.card, color: C.muted, border: `1px solid ${C.line}` }}
+                                >
+                                  {seatedHere} seated — move them to remove this table
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {Array.from({ length: t.capacity }).map((_, i) => {
                           const seatId = `${t.id}#${i}`;
                           const { dx, dy } = seatOffset(t.shape, renderPos.w, renderPos.h, i, t.capacity, 34, t.headCount, t.footCount);
@@ -4783,7 +4901,14 @@ export default function SeatingPlanner({
                   <div
                     data-map-control
                     className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full pl-3 pr-1 py-1 text-xs font-medium shadow-md max-w-[90%]"
-                    style={{ top: mapFullscreen ? "max(12px, env(safe-area-inset-top))" : 12, backgroundColor: C.ink, color: C.paper }}
+                    style={{
+                      // Sits below the top-row buttons when the "removed tables" button is there too.
+                      top: deletedTables.length > 0 && !readOnly
+                        ? mapFullscreen ? "calc(max(12px, env(safe-area-inset-top)) + 50px)" : 62
+                        : mapFullscreen ? "max(12px, env(safe-area-inset-top))" : 12,
+                      backgroundColor: C.ink,
+                      color: C.paper,
+                    }}
                   >
                     <span className="truncate">Tap a seat for {guestById[picked].name}</span>
                     <button
@@ -4794,6 +4919,59 @@ export default function SeatingPlanner({
                     >
                       <X size={12} />
                     </button>
+                  </div>
+                )}
+
+                {deletedTables.length > 0 && !readOnly && (
+                  <div
+                    data-map-control
+                    className="absolute"
+                    style={{ top: mapFullscreen ? "max(12px, env(safe-area-inset-top))" : 12, left: 12, maxWidth: "calc(100% - 80px)" }}
+                  >
+                    <button
+                      onClick={() => setShowRemovedTables((v) => !v)}
+                      aria-expanded={showRemovedTables}
+                      className="h-10 flex items-center gap-1.5 rounded-xl border px-3 text-xs font-medium shadow-sm"
+                      style={{ borderColor: C.line, backgroundColor: C.card, color: C.ink }}
+                    >
+                      <Plus size={14} />
+                      {deletedTables.length} removed table{deletedTables.length > 1 ? "s" : ""}
+                    </button>
+                    {showRemovedTables && (
+                      <div
+                        className="mt-2 w-60 max-w-full rounded-xl border shadow-lg overflow-hidden"
+                        style={{ borderColor: C.line, backgroundColor: C.card }}
+                      >
+                        <div className="max-h-60 overflow-y-auto">
+                          {deletedTables.map((t) => (
+                            <div key={t.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm border-b" style={{ borderColor: C.line, color: C.ink }}>
+                              <span className="truncate">
+                                {t.label}
+                                <span className="ml-1.5 text-xs" style={{ color: C.muted }}>
+                                  {t.capacity} seats
+                                </span>
+                              </span>
+                              <button
+                                onClick={() => restoreTable(t.id)}
+                                className="shrink-0 text-xs font-semibold px-2 py-1 rounded-md"
+                                style={{ color: C.gold }}
+                              >
+                                Add back
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        {deletedTables.length > 1 && (
+                          <button
+                            onClick={restoreAllTables}
+                            className="w-full px-3 py-2 text-xs font-semibold text-left"
+                            style={{ color: C.ink, backgroundColor: C.paper }}
+                          >
+                            Add all {deletedTables.length} back
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -4992,7 +5170,7 @@ export default function SeatingPlanner({
       <AgentChat
         eventId={eventId}
         role={role}
-        getState={() => ({ tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides })}
+        getState={() => ({ tableGroups, guests, groups, constraints, seatAssignment, fillMode, tableNameOverrides, deletedTableIds })}
         onApply={applyAgentOperations}
       />
     </div>
