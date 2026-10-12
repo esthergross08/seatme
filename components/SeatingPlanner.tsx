@@ -24,8 +24,6 @@ import {
   Undo2,
   Search,
   Share2,
-  Eye,
-  EyeOff,
   ClipboardCheck,
   Copy,
   Minus,
@@ -4385,89 +4383,67 @@ export default function SeatingPlanner({
 
         {tab === "seating" && (
           <div>
-            <div className="flex flex-wrap items-end justify-between gap-4 mb-4">
+            <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
               <SectionTitle eyebrow="Step three" title="Seating map" />
-              <div className="flex items-center gap-2">
-                <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: C.line }}>
-                  <button
-                    onClick={() => setSeatingView("map")}
-                    className="px-3 py-1.5 text-xs font-medium"
-                    style={{ backgroundColor: seatingView === "map" ? C.ink : C.card, color: seatingView === "map" ? C.paper : C.ink }}
-                  >
-                    Map
-                  </button>
-                  <button
-                    onClick={() => setSeatingView("table")}
-                    className="px-3 py-1.5 text-xs font-medium"
-                    style={{ backgroundColor: seatingView === "table" ? C.ink : C.card, color: seatingView === "table" ? C.paper : C.ink }}
-                  >
-                    Table
-                  </button>
-                </div>
+              <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: C.line }}>
                 <button
-                  onClick={() => runSolver()}
-                  disabled={readOnly || seatsShort || solving || guests.length === 0}
-                  className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg disabled:opacity-40"
-                  style={{ backgroundColor: C.gold, color: "#fff" }}
+                  onClick={() => setSeatingView("map")}
+                  className="px-3 py-1.5 text-xs font-medium"
+                  style={{ backgroundColor: seatingView === "map" ? C.ink : C.card, color: seatingView === "map" ? C.paper : C.ink }}
                 >
-                  <Wand2 size={15} />
-                  {solving ? "Generating…" : "Auto-generate seating"}
+                  Map
                 </button>
-                {seatedCount > 0 && (
-                  <button
-                    onClick={() => runSolver(true)}
-                    disabled={readOnly || seatsShort || solving || guests.length === 0}
-                    title="Try a different arrangement from scratch, ignoring 'keep close to current plan'"
-                    className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
-                    style={{ borderColor: C.line, color: C.ink }}
-                  >
-                    <Shuffle size={15} />
-                    {solving ? "Shuffling…" : "Shuffle seating"}
-                  </button>
-                )}
                 <button
-                  onClick={clearAllSeatsWithUndo}
-                  disabled={readOnly || seatedCount === 0}
-                  title="Unseat everyone and start the floor plan from scratch — keeps your guest list, groups, tables, and constraints"
-                  className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border disabled:opacity-40"
+                  onClick={() => setSeatingView("table")}
+                  className="px-3 py-1.5 text-xs font-medium"
+                  style={{ backgroundColor: seatingView === "table" ? C.ink : C.card, color: seatingView === "table" ? C.paper : C.ink }}
+                >
+                  Table
+                </button>
+              </div>
+            </div>
+
+            {/* Actions — wrap onto as many rows as the screen needs, never off the edge. */}
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <button
+                onClick={() => runSolver()}
+                disabled={readOnly || seatsShort || solving || guests.length === 0}
+                className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap disabled:opacity-40"
+                style={{ backgroundColor: C.gold, color: "#fff" }}
+              >
+                <Wand2 size={15} />
+                {solving ? "Generating…" : "Auto-generate seating"}
+              </button>
+              {seatedCount > 0 && (
+                <button
+                  onClick={() => runSolver(true)}
+                  disabled={readOnly || seatsShort || solving || guests.length === 0}
+                  title="Try a different arrangement from scratch, ignoring 'keep close to current plan'"
+                  className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border whitespace-nowrap disabled:opacity-40"
                   style={{ borderColor: C.line, color: C.ink }}
                 >
-                  <X size={14} /> Clear tables
+                  <Shuffle size={15} />
+                  {solving ? "Shuffling…" : "Shuffle seating"}
                 </button>
-                {seatingView === "map" && (
-                  <button
-                    onClick={() => setShowGuestNames((v) => !v)}
-                    title={showGuestNames ? "Switch to compact colored dots instead of name tags" : "Switch back to full name tags"}
-                    className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border"
-                    style={{ borderColor: C.line, color: C.ink }}
-                  >
-                    {showGuestNames ? <EyeOff size={14} /> : <Eye size={14} />}
-                    {showGuestNames ? "Hide names" : "Show names"}
-                  </button>
-                )}
-                {notedGuestCount > 0 && (
-                  <button
-                    onClick={() => setHighlightNotes((v) => !v)}
-                    title="Highlight every seat with a note, and list them for a final sweep"
-                    className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border"
-                    style={{
-                      borderColor: highlightNotes ? C.gold : C.line,
-                      color: highlightNotes ? "#fff" : C.ink,
-                      backgroundColor: highlightNotes ? C.gold : C.card,
-                    }}
-                  >
-                    <StickyNote size={14} /> Notes ({notedGuestCount})
-                  </button>
-                )}
+              )}
+              <button
+                onClick={clearAllSeatsWithUndo}
+                disabled={readOnly || seatedCount === 0}
+                title="Unseat everyone and start the floor plan from scratch — keeps your guest list, groups, tables, and constraints"
+                className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border whitespace-nowrap disabled:opacity-40"
+                style={{ borderColor: C.line, color: C.ink }}
+              >
+                <X size={14} /> Clear tables
+              </button>
                 <details ref={exportMenuRef} className="relative">
                   <summary
-                    className="list-none flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border cursor-pointer"
+                    className="list-none flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border cursor-pointer whitespace-nowrap"
                     style={{ borderColor: C.line, color: C.ink }}
                   >
                     <Download size={14} /> Export
                   </summary>
                   <div
-                    className="absolute right-0 mt-1 rounded-lg border shadow-lg overflow-hidden z-10"
+                    className="absolute left-0 sm:left-auto sm:right-0 mt-1 rounded-lg border shadow-lg overflow-hidden z-10"
                     style={{ borderColor: C.line, backgroundColor: C.card, minWidth: 180 }}
                   >
                     <button
@@ -4496,20 +4472,23 @@ export default function SeatingPlanner({
                     </button>
                   </div>
                 </details>
-              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-4 mb-6">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium" style={{ color: C.muted }}>
+            {/* Settings — every on/off option on its own row with its full label. */}
+            <div className="mb-6 rounded-xl border overflow-hidden" style={{ borderColor: C.line, backgroundColor: C.card }}>
+            {/* -mb-px tucks the last row's divider under the panel's own border */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 -mb-px">
+              <div className="px-4 py-3 flex flex-col gap-2 border-b lg:col-span-2" style={{ borderColor: C.line }}>
+                <span className="text-sm" style={{ color: C.ink }}>
                   If there are more seats than guests
                 </span>
-                <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: C.line }}>
+                <div className="grid grid-cols-2 rounded-lg border overflow-hidden w-full sm:w-auto sm:max-w-md" style={{ borderColor: C.line }}>
                   <button
                     onClick={() => setFillMode("consolidate")}
                     disabled={readOnly}
+                    aria-pressed={fillMode === "consolidate"}
                     title="Fill tables to capacity and leave extras empty"
-                    className="px-3 py-1.5 text-xs font-medium"
+                    className="px-3 py-2 text-xs font-medium leading-snug"
                     style={{ backgroundColor: fillMode === "consolidate" ? C.ink : C.card, color: fillMode === "consolidate" ? C.paper : C.ink }}
                   >
                     Consolidate tables
@@ -4517,42 +4496,64 @@ export default function SeatingPlanner({
                   <button
                     onClick={() => setFillMode("spread")}
                     disabled={readOnly}
+                    aria-pressed={fillMode === "spread"}
                     title="Spread guests evenly across every table"
-                    className="px-3 py-1.5 text-xs font-medium"
-                    style={{ backgroundColor: fillMode === "spread" ? C.ink : C.card, color: fillMode === "spread" ? C.paper : C.ink }}
+                    className="px-3 py-2 text-xs font-medium leading-snug border-l"
+                    style={{ borderColor: C.line, backgroundColor: fillMode === "spread" ? C.ink : C.card, color: fillMode === "spread" ? C.paper : C.ink }}
                   >
                     Spread across all tables
                   </button>
                 </div>
               </div>
-              <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: C.muted }}>
-                <input
-                  type="checkbox"
-                  checked={minimizeChanges}
-                  disabled={readOnly}
-                  onChange={(e) => setMinimizeChanges(e.target.checked)}
+              <SettingRow
+                label="Keep close to current plan when regenerating"
+                checked={minimizeChanges}
+                disabled={readOnly}
+                onChange={setMinimizeChanges}
+              />
+              {seatingView === "map" && (
+                <SettingRow
+                  label="Show guest names on the map"
+                  hint={showGuestNames ? "Names appear once you zoom in" : "Coloured dots only"}
+                  checked={showGuestNames}
+                  onChange={setShowGuestNames}
                 />
-                Keep close to current plan when regenerating
-              </label>
-              {hiddenTableCount > 0 && (
-                <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: C.muted }}>
-                  <input type="checkbox" checked={showAllTables} onChange={(e) => setShowAllTables(e.target.checked)} />
-                  Show {hiddenTableCount} unused table{hiddenTableCount > 1 ? "s" : ""}
-                </label>
+              )}
+              {notedGuestCount > 0 && (
+                <SettingRow
+                  label={`Highlight guests with notes (${notedGuestCount})`}
+                  hint="Marks their seats and lists them for a final check"
+                  checked={highlightNotes}
+                  onChange={setHighlightNotes}
+                />
+              )}
+              {(hiddenTableCount > 0 || showAllTables) && (
+                <SettingRow
+                  label={showAllTables ? "Showing unused tables" : `Show ${hiddenTableCount} unused table${hiddenTableCount > 1 ? "s" : ""}`}
+                  hint="Empty tables auto-generate left out"
+                  checked={showAllTables}
+                  onChange={setShowAllTables}
+                />
               )}
               {!readOnly && !showAllTables && seatedCount > 0 && emptyVisibleTableIds.length > 0 && (
-                <button
-                  onClick={() => {
-                    const prev = hiddenTableIds;
-                    setHiddenTableIds(Array.from(new Set([...hiddenTableIds, ...emptyVisibleTableIds])));
-                    pushUndo(`Hid ${emptyVisibleTableIds.length} empty table${emptyVisibleTableIds.length > 1 ? "s" : ""}.`, () => setHiddenTableIds(prev));
-                  }}
-                  className="text-xs font-semibold underline"
-                  style={{ color: C.gold }}
-                >
-                  Hide {emptyVisibleTableIds.length} empty table{emptyVisibleTableIds.length > 1 ? "s" : ""}
-                </button>
+                <div className="px-4 py-3 flex items-center justify-between gap-3 border-b" style={{ borderColor: C.line }}>
+                  <span className="min-w-0 text-sm" style={{ color: C.ink }}>
+                    {emptyVisibleTableIds.length} empty table{emptyVisibleTableIds.length > 1 ? "s" : ""} on the map
+                  </span>
+                  <button
+                    onClick={() => {
+                      const prev = hiddenTableIds;
+                      setHiddenTableIds(Array.from(new Set([...hiddenTableIds, ...emptyVisibleTableIds])));
+                      pushUndo(`Hid ${emptyVisibleTableIds.length} empty table${emptyVisibleTableIds.length > 1 ? "s" : ""}.`, () => setHiddenTableIds(prev));
+                    }}
+                    className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg border whitespace-nowrap"
+                    style={{ borderColor: C.gold, color: C.gold }}
+                  >
+                    Hide them
+                  </button>
+                </div>
               )}
+            </div>
             </div>
 
             {liveSummary && (
@@ -6192,5 +6193,57 @@ function FixtureSizeEditor({
         </button>
       )}
     </div>
+  );
+}
+
+// One on/off setting: full label (wraps if it must, never cut off) with a
+// switch on the right.
+function SettingRow({
+  label,
+  hint,
+  checked,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label
+      className={`px-4 py-3 flex items-center justify-between gap-3 border-b ${disabled ? "opacity-50" : "cursor-pointer"}`}
+      style={{ borderColor: "#E4DCC9" }}
+    >
+      <span className="min-w-0 flex flex-col">
+        <span className="text-sm leading-snug" style={{ color: "#221F2B" }}>
+          {label}
+        </span>
+        {hint && (
+          <span className="text-xs leading-snug" style={{ color: "#736D5F" }}>
+            {hint}
+          </span>
+        )}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        disabled={disabled}
+        onClick={(e) => {
+          e.preventDefault();
+          onChange(!checked);
+        }}
+        className="relative shrink-0 rounded-full transition-colors"
+        style={{ width: 40, height: 24, backgroundColor: checked ? "#A8823C" : "#D9D1BF" }}
+      >
+        <span
+          className="absolute top-0.5 rounded-full bg-white shadow transition-all"
+          style={{ width: 20, height: 20, left: checked ? 18 : 2 }}
+        />
+      </button>
+    </label>
   );
 }
