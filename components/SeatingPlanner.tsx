@@ -5548,12 +5548,33 @@ export default function SeatingPlanner({
                               : seatRoles && seatRoles.footIdxs.includes(i)
                               ? "Foot"
                               : null;
-                          const boxW = namesOnMap ? (tagsCrowded ? 22 : 68) : 16;
+                          // Crowded tables switch to narrow upright tags, which only fit side by
+                          // side along a horizontal edge. Pick each seat's tag direction from
+                          // the way its edge faces *after* the table is turned: seats on a
+                          // top/bottom edge get tall tags, seats on a left/right edge keep the
+                          // normal wide ones (stacked down the side, each readable).
+                          let nx: number;
+                          let ny: number;
+                          if (seatRoles) {
+                            if (seatRoles.headIdxs.includes(i)) [nx, ny] = [-1, 0];
+                            else if (seatRoles.footIdxs.includes(i)) [nx, ny] = [1, 0];
+                            else if (seatRoles.sideTopIdxs.includes(i)) [nx, ny] = [0, -1];
+                            else [nx, ny] = [0, 1];
+                          } else {
+                            // Outward normal of the elliptical seat ring.
+                            const rw = renderPos.w / 2 + 34;
+                            const rh = renderPos.h / 2 + 34;
+                            nx = o.dx / (rw * rw);
+                            ny = o.dy / (rh * rh);
+                          }
+                          const facing = rotateOffset(nx, ny, tRot);
+                          const tallTag = tagsCrowded && Math.abs(facing.dy) >= Math.abs(facing.dx);
+                          const boxW = namesOnMap ? (tallTag ? 22 : 68) : 16;
                           // Crowded (rotated) tags were capped at 58px tall — only room for
                           // a handful of characters before the ellipsis kicked in, so most
                           // full names were unreadable. 100px gives a rotated tag roughly
                           // twice the text room.
-                          const boxH = namesOnMap ? (tagsCrowded ? 100 : 30) : 16;
+                          const boxH = namesOnMap ? (tallTag ? 100 : 30) : 16;
                           return (
                             <div key={seatId} data-map-item className="absolute" style={{ left: x - boxW / 2, top: y - boxH / 2 }}>
                             {seatRoleLabel && (
@@ -5655,12 +5676,12 @@ export default function SeatingPlanner({
                                 // dropping every name from the exported seat map.
                                 <span
                                   className={
-                                    tagsCrowded
+                                    tallTag
                                       ? "text-[10px] leading-none whitespace-nowrap overflow-hidden text-ellipsis inline-block"
                                       : "text-[10px] px-1 truncate"
                                   }
                                   style={
-                                    tagsCrowded
+                                    tallTag
                                       ? {
                                           fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
                                           color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
