@@ -130,6 +130,8 @@ Fixtures at true scale (2026-10-12): dance floor, bar and stage used fixed pixel
 
 Make room on resize (2026-10-12): general rule, whenever anything on the floor plan gets bigger (Bigger/Smaller, the resize handle, more seats, a shape change, a longer table name, the dance floor growing with the guest list), whatever it now overlaps is nudged aside. Detection is generic: an effect compares every table's and fixture's footprint with the previous render, so no resize path has to opt in; whole-plan rescaling of small plans, first load, view-only access and mid-drag are skipped. `makeRoom()` relaxes overlaps in passes (resized items stay fixed, other pairs split the push along the shorter axis, ripple outward only through things actually touched), then shifts the whole plan right/down if anything ended up past the top/left edge. Everything is then pinned where it's drawn, so auto-placed tables don't reflow. One undo restores the previous positions ("Moved 3 tables to make room").
 
+PowerPoint-style fixture sizing (2026-10-12): tap a dance floor, bar or stage to get eight handles; drag a side to change one dimension, a corner for both (Shift keeps proportions); the opposite side stays put and the live size shows in metres. The menu's size button (e.g. "4.8 × 4 m") opens Width/Length fields for exact venue measurements, plus "Auto (fits guest count)" / "Reset to standard size". Fixtures now store an exact `wM`/`hM` in metres once sized by hand (legacy `sizeScale` still read); Bigger/Smaller scale both sides by 15%. Growing a fixture triggers the make-room rule as usual.
+
 ## Planned: next up (queued 2026-09-28)
 
 Three items Esther flagged to work through after the constraints-on-guest-row change above:

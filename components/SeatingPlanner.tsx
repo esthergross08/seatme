@@ -143,9 +143,12 @@ interface Fixture {
   id: string;
   type: FixtureType;
   label?: string;
-  // Purely visual — bigger/smaller than the auto size (1 = auto). Set from the
-  // fixture's tap menu, same idea as a table group's sizeScale.
+  // Legacy (pre width/height): uniform bigger/smaller multiplier on the auto size.
   sizeScale?: number;
+  // Exact size in metres, set by dragging the fixture's handles or typing it in.
+  // Unset = auto size (dance floor follows the guest count).
+  wM?: number;
+  hM?: number;
 }
 const FIXTURE_DEFAULTS: Record<FixtureType, { label: string; fill: string; border: string }> = {
   danceFloor: { label: "Dance floor", fill: "#E8EFE4", border: C.sage },
@@ -163,7 +166,7 @@ const PX_PER_M = 76;
 //    ~4.5 sq ft each (100 guests ≈ 15×15 ft). Min 3 m square, max 10 m.
 //  - Bar: a 12 ft two-bartender bar, 3.6 × 0.9 m.
 //  - Stage / band: ~150 sq ft band area, 4.8 × 3 m.
-function fixtureSizeM(type: FixtureType, guestCount: number) {
+function autoFixtureSizeM(type: FixtureType, guestCount: number) {
   if (type === "danceFloor") {
     const side = Math.max(3, Math.min(10, Math.sqrt(Math.max(0, guestCount) * 0.19)));
     return { w: side * 1.1, h: side / 1.1 };
@@ -171,6 +174,17 @@ function fixtureSizeM(type: FixtureType, guestCount: number) {
   if (type === "bar") return { w: 3.6, h: 0.9 };
   return { w: 4.8, h: 3 };
 }
+// The size a fixture is actually drawn at, in metres.
+function fixtureSizeM(f: Fixture, guestCount: number) {
+  if (f.wM && f.hM) return { w: f.wM, h: f.hM };
+  const auto = autoFixtureSizeM(f.type, guestCount);
+  const k = f.sizeScale || 1;
+  return { w: auto.w * k, h: auto.h * k };
+}
+const FIXTURE_MIN_M = 0.5;
+const FIXTURE_MAX_M = 40;
+const roundM = (m: number) => Math.round(Math.max(FIXTURE_MIN_M, Math.min(FIXTURE_MAX_M, m)) * 10) / 10;
+const formatM = (m: number) => (Math.round(m * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 });
 
 type RsvpStatus = "attending" | "pending" | "declined";
 interface Guest {
@@ -1115,6 +1129,10 @@ export default function SeatingPlanner({
   // follows the drag doesn't also select it.
   const tableJustDragged = useRef(false);
   const [selectedFixtureId, setSelectedFixtureId] = useState<string | null>(null);
+  // Live preview while dragging a fixture's resize handle (room px).
+  const [fixtureResize, setFixtureResize] = useState<{ id: string; cx: number; cy: number; w: number; h: number } | null>(null);
+  // Fixture whose "type the exact size" box is open.
+  const [sizeEditorId, setSizeEditorId] = useState<string | null>(null);
   // "Move" from the selection menu: the next tap on the map is where it goes —
   // the no-drag way to rearrange the room.
   const [movingItem, setMovingItem] = useState<{ kind: "table" | "fixture"; id: string; label: string } | null>(null);
@@ -1322,8 +1340,8 @@ export default function SeatingPlanner({
     let nextX = 40;
     const rowTop = layout.height + 10;
     fixtures.forEach((f) => {
-      const m = fixtureSizeM(f.type, fixtureGuestCount);
-      const k = PX_PER_M * layout.scale * (f.sizeScale || 1);
+      const m = fixtureSizeM(f, fixtureGuestCount);
+      const k = PX_PER_M * layout.scale;
       const w = m.w * k;
       const h = m.h * k;
       const saved = fixturePositions[f.id];
@@ -1360,7 +1378,7 @@ export default function SeatingPlanner({
     // Skip the first look, view-only access, mid-drag, and whole-plan rescaling
     // (the layout auto-zooming small plans changes every size at once — that's
     // not someone resizing a thing).
-    if (!prev || readOnly || dragTable || resizingGroupId || prev.scale !== layout.scale) return;
+    if (!prev || readOnly || dragTable || resizingGroupId || fixtureResize || prev.scale !== layout.scale) return;
     const grown = new Set(
       Object.keys(sizes).filter((k) => prev.sizes[k] && (sizes[k].w > prev.sizes[k].w + 0.5 || sizes[k].h > prev.sizes[k].h + 0.5))
     );
@@ -1430,6 +1448,7 @@ export default function SeatingPlanner({
   function clearMapSelection() {
     setSelectedTableId(null);
     setSelectedFixtureId(null);
+    setSizeEditorId(null);
   }
 
 
@@ -1862,15 +1881,19 @@ export default function SeatingPlanner({
     if (readOnly) return;
     setFixtures((f) => f.map((x) => (x.id === id ? { ...x, label } : x)));
   };
-  const resizeFixture = (fixtureId: string, delta: number) => {
+  // Set a fixture's exact size in metres (keeps its centre where it is).
+  const setFixtureSizeM = (fixtureId: string, wM: number, hM: number) => {
     if (readOnly) return;
     setFixtures((list) =>
-      list.map((x) =>
-        x.id === fixtureId
-          ? { ...x, sizeScale: Math.round(Math.max(0.4, Math.min(3, (x.sizeScale || 1) + delta)) * 100) / 100 }
-          : x
-      )
+      list.map((x) => (x.id === fixtureId ? { ...x, wM: roundM(wM), hM: roundM(hM), sizeScale: undefined } : x))
     );
+  };
+  // Bigger/Smaller in the tap menu: scale both sides together.
+  const resizeFixture = (fixtureId: string, factor: number) => {
+    const f = fixtures.find((x) => x.id === fixtureId);
+    if (!f) return;
+    const m = fixtureSizeM(f, fixtureGuestCount);
+    setFixtureSizeM(fixtureId, m.w * factor, m.h * factor);
   };
   const moveFixture = (fixtureId: string, x: number, y: number) => {
     if (readOnly) return;
@@ -4656,9 +4679,74 @@ export default function SeatingPlanner({
                     const def = FIXTURE_DEFAULTS[f.type];
                     const fl = room.fixtures[f.id];
                     if (!fl) return null;
-                    const dims = { w: fl.w, h: fl.h };
-                    const basePos = { cx: fl.cx, cy: fl.cy };
+                    const live = fixtureResize?.id === f.id ? fixtureResize : null;
+                    const dims = live ? { w: live.w, h: live.h } : { w: fl.w, h: fl.h };
+                    const basePos = live ? { cx: live.cx, cy: live.cy } : { cx: fl.cx, cy: fl.cy };
                     const pos = dragFixture && dragFixture.id === f.id ? { cx: dragFixture.x, cy: dragFixture.y } : basePos;
+                    const pxPerM = PX_PER_M * layout.scale;
+                    const sizeLabel = `${formatM(dims.w / pxPerM)} × ${formatM(dims.h / pxPerM)} m`;
+
+                    // PowerPoint-style resize: drag a side to change one dimension, a
+                    // corner for both (hold Shift on a corner to keep the proportions).
+                    // The opposite side stays put.
+                    const beginFixtureResize = (e: React.PointerEvent<HTMLDivElement>, hx: -1 | 0 | 1, hy: -1 | 0 | 1) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const handle = e.currentTarget;
+                      handle.setPointerCapture(e.pointerId);
+                      const zoom = map.getScale();
+                      map.beginItemDrag();
+                      const start = { l: pos.cx - dims.w / 2, r: pos.cx + dims.w / 2, t: pos.cy - dims.h / 2, b: pos.cy + dims.h / 2 };
+                      const minPx = FIXTURE_MIN_M * pxPerM;
+                      const sx = e.clientX;
+                      const sy = e.clientY;
+                      const aspect = dims.w / dims.h;
+                      const compute = (clientX: number, clientY: number, keepAspect: boolean) => {
+                        let { l, r, t, b } = start;
+                        const dx = (clientX - sx) / zoom;
+                        const dy = (clientY - sy) / zoom;
+                        if (hx === -1) l = Math.min(r - minPx, Math.max(0, l + dx));
+                        if (hx === 1) r = Math.max(l + minPx, r + dx);
+                        if (hy === -1) t = Math.min(b - minPx, Math.max(0, t + dy));
+                        if (hy === 1) b = Math.max(t + minPx, b + dy);
+                        if (keepAspect && hx !== 0 && hy !== 0) {
+                          const w = r - l;
+                          const h = b - t;
+                          if (w / h > aspect) {
+                            const nh = w / aspect;
+                            if (hy === -1) t = b - nh;
+                            else b = t + nh;
+                          } else {
+                            const nw = h * aspect;
+                            if (hx === -1) l = r - nw;
+                            else r = l + nw;
+                          }
+                        }
+                        return { id: f.id, cx: (l + r) / 2, cy: (t + b) / 2, w: r - l, h: b - t };
+                      };
+                      let last = compute(sx, sy, false);
+                      setFixtureResize(last);
+                      const onMove = (ev: PointerEvent) => {
+                        last = compute(ev.clientX, ev.clientY, ev.shiftKey);
+                        setFixtureResize(last);
+                      };
+                      const onUp = () => {
+                        handle.removeEventListener("pointermove", onMove);
+                        handle.removeEventListener("pointerup", onUp);
+                        handle.removeEventListener("pointercancel", onUp);
+                        map.endItemDrag();
+                        setFixtures((list) =>
+                          list.map((x) =>
+                            x.id === f.id ? { ...x, wM: roundM(last.w / pxPerM), hM: roundM(last.h / pxPerM), sizeScale: undefined } : x
+                          )
+                        );
+                        moveFixture(f.id, last.cx, last.cy);
+                        setFixtureResize(null);
+                      };
+                      handle.addEventListener("pointermove", onMove);
+                      handle.addEventListener("pointerup", onUp);
+                      handle.addEventListener("pointercancel", onUp);
+                    };
                     // Label grows with the fixture so a big dance floor isn't labelled in 11px type.
                     const labelPx = Math.round(Math.max(11, Math.min(30, Math.min(dims.w, dims.h) * 0.14)));
                     const beginFixtureDrag = (startClientX: number, startClientY: number) => {
@@ -4767,10 +4855,11 @@ export default function SeatingPlanner({
                         {selectedFixtureId === f.id && !readOnly && dragFixture?.id !== f.id && (
                           <div
                             data-map-control
-                            className="absolute z-10 flex items-center gap-1 rounded-full p-1 shadow-md"
+                            className="absolute z-30 flex items-center gap-1 rounded-full p-1 shadow-md"
                             style={{
                               left: "50%",
-                              top: -8,
+                              // Clear of the top resize handles (16px on screen above the edge).
+                              top: -24 / map.view.scale,
                               transform: `translate(-50%, -100%) scale(${1 / map.view.scale})`,
                               transformOrigin: "50% 100%",
                               backgroundColor: C.ink,
@@ -4778,8 +4867,13 @@ export default function SeatingPlanner({
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <MapMenuButton icon={<Minus size={13} />} label="Smaller" hideLabel onClick={() => resizeFixture(f.id, -0.15)} />
-                            <MapMenuButton icon={<Plus size={13} />} label="Bigger" hideLabel onClick={() => resizeFixture(f.id, 0.15)} />
+                            <MapMenuButton icon={<Minus size={13} />} label="Smaller" hideLabel onClick={() => resizeFixture(f.id, 1 / 1.15)} />
+                            <MapMenuButton icon={<Plus size={13} />} label="Bigger" hideLabel onClick={() => resizeFixture(f.id, 1.15)} />
+                            <MapMenuButton
+                              icon={<Maximize2 size={13} />}
+                              label={sizeLabel}
+                              onClick={() => setSizeEditorId((cur) => (cur === f.id ? null : f.id))}
+                            />
                             <MapMenuButton
                               icon={<Move size={13} />}
                               label="Move"
@@ -4797,6 +4891,82 @@ export default function SeatingPlanner({
                               }}
                             />
                           </div>
+                        )}
+                        {selectedFixtureId === f.id && !readOnly && dragFixture?.id !== f.id && sizeEditorId === f.id && !live && (
+                          <FixtureSizeEditor
+                            key={`${f.id}-${dims.w}-${dims.h}`}
+                            wM={dims.w / pxPerM}
+                            hM={dims.h / pxPerM}
+                            zoom={map.view.scale}
+                            border={def.border}
+                            onChange={(w, h) => setFixtureSizeM(f.id, w, h)}
+                            onAuto={
+                              f.wM || f.sizeScale
+                                ? () => {
+                                    setFixtures((list) => list.map((x) => (x.id === f.id ? { ...x, wM: undefined, hM: undefined, sizeScale: undefined } : x)));
+                                    setSizeEditorId(null);
+                                  }
+                                : undefined
+                            }
+                            autoLabel={f.type === "danceFloor" ? "Auto (fits guest count)" : "Reset to standard size"}
+                          />
+                        )}
+                        {((selectedFixtureId === f.id && !readOnly && dragFixture?.id !== f.id) || live) && (
+                          <>
+                            {/* eight PowerPoint-style handles */}
+                            {(
+                              [
+                                [-1, -1, "nwse-resize"],
+                                [0, -1, "ns-resize"],
+                                [1, -1, "nesw-resize"],
+                                [1, 0, "ew-resize"],
+                                [1, 1, "nwse-resize"],
+                                [0, 1, "ns-resize"],
+                                [-1, 1, "nesw-resize"],
+                                [-1, 0, "ew-resize"],
+                              ] as [-1 | 0 | 1, -1 | 0 | 1, string][]
+                            ).map(([hx, hy, cursor]) => (
+                              <div
+                                key={`${hx},${hy}`}
+                                data-map-control
+                                role="presentation"
+                                onPointerDown={(e) => beginFixtureResize(e, hx, hy)}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                className="absolute z-10 flex items-center justify-center"
+                                style={{
+                                  // 32px finger target around a 12px visible square, constant on screen.
+                                  width: 32,
+                                  height: 32,
+                                  left: `${50 + hx * 50}%`,
+                                  top: `${50 + hy * 50}%`,
+                                  transform: `translate(-50%, -50%) scale(${1 / map.view.scale})`,
+                                  cursor,
+                                  touchAction: "none",
+                                }}
+                              >
+                                <span
+                                  className="block rounded-sm"
+                                  style={{ width: 12, height: 12, backgroundColor: "#fff", border: `2px solid ${def.border}`, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
+                                />
+                              </div>
+                            ))}
+                            {live && (
+                              <div
+                                className="absolute z-20 whitespace-nowrap rounded-md px-2 py-1 text-xs font-semibold pointer-events-none"
+                                style={{
+                                  left: "50%",
+                                  top: "50%",
+                                  transform: `translate(-50%, -50%) scale(${1 / map.view.scale})`,
+                                  backgroundColor: C.ink,
+                                  color: "#fff",
+                                }}
+                              >
+                                {sizeLabel}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     );
@@ -5676,5 +5846,89 @@ function MapMenuButton({
       {icon}
       {!hideLabel && label}
     </button>
+  );
+}
+
+// "Type the exact size" box under a fixture's tap menu — the non-drag way to set
+// width and length, e.g. straight from the venue's spec sheet. Commits on Enter
+// or when a field loses focus.
+function FixtureSizeEditor({
+  wM,
+  hM,
+  zoom,
+  border,
+  onChange,
+  onAuto,
+  autoLabel,
+}: {
+  wM: number;
+  hM: number;
+  zoom: number;
+  border: string;
+  onChange: (wM: number, hM: number) => void;
+  onAuto?: () => void;
+  autoLabel: string;
+}) {
+  const [w, setW] = useState(String(Math.round(wM * 10) / 10));
+  const [h, setH] = useState(String(Math.round(hM * 10) / 10));
+  const commit = () => {
+    const nw = parseFloat(w.replace(",", "."));
+    const nh = parseFloat(h.replace(",", "."));
+    if (nw > 0 && nh > 0 && (Math.abs(nw - wM) > 0.05 || Math.abs(nh - hM) > 0.05)) onChange(nw, nh);
+  };
+  const field = (value: string, set: (v: string) => void, label: string) => (
+    <label className="flex flex-col gap-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "#736D5F" }}>
+      {label}
+      <span className="flex items-center gap-1">
+        <input
+          inputMode="decimal"
+          value={value}
+          onChange={(e) => set(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              commit();
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          aria-label={`${label} in metres`}
+          className="w-16 px-2 py-1.5 rounded-md border text-sm font-normal normal-case tracking-normal"
+          style={{ borderColor: "#E4DCC9", color: "#221F2B", userSelect: "text", WebkitUserSelect: "text" }}
+        />
+        <span className="text-xs font-normal normal-case tracking-normal">m</span>
+      </span>
+    </label>
+  );
+  return (
+    <div
+      data-map-control
+      className="absolute z-20 rounded-xl border p-3 shadow-lg flex flex-col gap-2"
+      style={{
+        left: "50%",
+        top: "100%",
+        // Clear of the bottom resize handles (16px on screen below the edge).
+        marginTop: 24 / zoom,
+        transform: `translateX(-50%) scale(${1 / zoom})`,
+        transformOrigin: "50% 0",
+        backgroundColor: "#fff",
+        borderColor: border,
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-end gap-2">
+        {field(w, setW, "Width")}
+        <span className="pb-2 text-sm" style={{ color: "#736D5F" }}>
+          ×
+        </span>
+        {field(h, setH, "Length")}
+      </div>
+      {onAuto && (
+        <button type="button" onClick={onAuto} className="text-xs font-semibold text-left" style={{ color: border }}>
+          {autoLabel}
+        </button>
+      )}
+    </div>
   );
 }
