@@ -143,18 +143,33 @@ interface Fixture {
   id: string;
   type: FixtureType;
   label?: string;
+  // Purely visual — bigger/smaller than the auto size (1 = auto). Set from the
+  // fixture's tap menu, same idea as a table group's sizeScale.
+  sizeScale?: number;
 }
-const FIXTURE_DEFAULTS: Record<FixtureType, { label: string; w: number; h: number; fill: string; border: string }> = {
-  danceFloor: { label: "Dance floor", w: 180, h: 120, fill: "#E8EFE4", border: C.sage },
-  bar: { label: "Bar", w: 140, h: 70, fill: C.goldSoft, border: C.gold },
-  stage: { label: "Stage / band", w: 160, h: 90, fill: "#F1E3E3", border: C.wine },
+const FIXTURE_DEFAULTS: Record<FixtureType, { label: string; fill: string; border: string }> = {
+  danceFloor: { label: "Dance floor", fill: "#E8EFE4", border: C.sage },
+  bar: { label: "Bar", fill: C.goldSoft, border: C.gold },
+  stage: { label: "Stage / band", fill: "#F1E3E3", border: C.wine },
 };
-// Simple cascading default so a newly-added fixture doesn't stack exactly on top of
-// the last one — purely a starting point, since fixtures are freely draggable afterward.
-function defaultFixturePosition(index: number) {
-  const col = index % 3;
-  const row = Math.floor(index / 3);
-  return { cx: 140 + col * 200, cy: 140 + row * 160 };
+
+// Floor-plan scale: a standard 8-10 seat round table (60", ~1.5 m across) is drawn
+// 116 px wide at layout scale 1, so 1 m ≈ 76 px. Fixtures use the same scale so
+// they sit in true proportion to the tables instead of looking like toys.
+const PX_PER_M = 76;
+
+// Real-world size of a fixture in metres, before any manual Bigger/Smaller.
+//  - Dance floor: ~0.19 m² per guest — 40-50% of wedding guests dancing at once at
+//    ~4.5 sq ft each (100 guests ≈ 15×15 ft). Min 3 m square, max 10 m.
+//  - Bar: a 12 ft two-bartender bar, 3.6 × 0.9 m.
+//  - Stage / band: ~150 sq ft band area, 4.8 × 3 m.
+function fixtureSizeM(type: FixtureType, guestCount: number) {
+  if (type === "danceFloor") {
+    const side = Math.max(3, Math.min(10, Math.sqrt(Math.max(0, guestCount) * 0.19)));
+    return { w: side * 1.1, h: side / 1.1 };
+  }
+  if (type === "bar") return { w: 3.6, h: 0.9 };
+  return { w: 4.8, h: 3 };
 }
 
 type RsvpStatus = "attending" | "pending" | "declined";
@@ -498,7 +513,7 @@ function computeLayout(
     });
     const rows = Math.ceil(autoTables.length / cols);
     const gridHeight = Math.max(cell, rows * cell);
-    return { positions, width: Math.max(cols * cell, maxX), height: Math.max(gridHeight, maxY) };
+    return { positions, width: Math.max(cols * cell, maxX), height: Math.max(gridHeight, maxY), scale };
   }
 
   let scale = countScale;
@@ -1221,7 +1236,40 @@ export default function SeatingPlanner({
 
   // Zoom/pan window around the floor plan — opens on the whole room, pinch or
   // scroll to zoom in (see useMapViewport).
-  const map = useMapViewport(layout.width, layout.height);
+  // Fixtures (dance floor, bar, stage) at true scale relative to the tables. Ones
+  // that haven't been placed by hand line up in a row below the tables, so they
+  // never land on top of one. The room's bounds grow to include them, so "All"
+  // shows everything.
+  const fixtureGuestCount = useMemo(() => guests.filter((g) => g.rsvpStatus !== "declined").length, [guests]);
+  const room = useMemo(() => {
+    const positions: Record<string, { cx: number; cy: number; w: number; h: number }> = {};
+    let width = layout.width;
+    let height = layout.height;
+    let nextX = 40;
+    const rowTop = layout.height + 10;
+    fixtures.forEach((f) => {
+      const m = fixtureSizeM(f.type, fixtureGuestCount);
+      const k = PX_PER_M * layout.scale * (f.sizeScale || 1);
+      const w = m.w * k;
+      const h = m.h * k;
+      const saved = fixturePositions[f.id];
+      let cx: number, cy: number;
+      if (saved) {
+        cx = saved.x;
+        cy = saved.y;
+      } else {
+        cx = nextX + w / 2;
+        cy = rowTop + h / 2;
+        nextX += w + 50;
+      }
+      positions[f.id] = { cx, cy, w, h };
+      width = Math.max(width, cx + w / 2 + 40);
+      height = Math.max(height, cy + h / 2 + 40);
+    });
+    return { fixtures: positions, width, height };
+  }, [fixtures, fixturePositions, fixtureGuestCount, layout.width, layout.height, layout.scale]);
+
+  const map = useMapViewport(room.width, room.height);
   useEffect(() => {
     if (!map.size.width || !map.size.height) return;
     const width = Math.max(320, map.size.width - 32);
@@ -1286,9 +1334,8 @@ export default function SeatingPlanner({
       const min = (pos?.seatR ?? 60) + 10;
       moveTable(movingItem.id, Math.max(min, p.x), Math.max(min, p.y));
     } else {
-      const fx = fixtures.find((f) => f.id === movingItem.id);
-      const def = fx ? FIXTURE_DEFAULTS[fx.type] : { w: 100, h: 60 };
-      moveFixture(movingItem.id, Math.max(def.w / 2, p.x), Math.max(def.h / 2, p.y));
+      const dims = room.fixtures[movingItem.id] ?? { w: 100, h: 60 };
+      moveFixture(movingItem.id, Math.max(dims.w / 2, p.x), Math.max(dims.h / 2, p.y));
     }
     setMovingItem(null);
   }
@@ -1686,6 +1733,16 @@ export default function SeatingPlanner({
   const renameFixture = (id: string, label: string) => {
     if (readOnly) return;
     setFixtures((f) => f.map((x) => (x.id === id ? { ...x, label } : x)));
+  };
+  const resizeFixture = (fixtureId: string, delta: number) => {
+    if (readOnly) return;
+    setFixtures((list) =>
+      list.map((x) =>
+        x.id === fixtureId
+          ? { ...x, sizeScale: Math.round(Math.max(0.4, Math.min(3, (x.sizeScale || 1) + delta)) * 100) / 100 }
+          : x
+      )
+    );
   };
   const moveFixture = (fixtureId: string, x: number, y: number) => {
     if (readOnly) return;
@@ -4442,8 +4499,8 @@ export default function SeatingPlanner({
               >
                 {/* Pan/zoom transform is written onto this layer directly by useMapViewport. */}
                 <div ref={map.contentRef} className="absolute left-0 top-0">
-                <div ref={mapCaptureRef} className="relative" style={{ width: layout.width, height: layout.height, minWidth: layout.width }}>
-                  <svg className="absolute inset-0 pointer-events-none" width={layout.width} height={layout.height}>
+                <div ref={mapCaptureRef} className="relative" style={{ width: room.width, height: room.height, minWidth: room.width }}>
+                  <svg className="absolute inset-0 pointer-events-none" width={room.width} height={room.height}>
                     {flatViolations
                       .filter((v) => v.status !== "unseated")
                       .filter((v) => v.status === "violated" || v.aId === hoveredGuest || v.bId === hoveredGuest || v.aId === picked || v.bId === picked)
@@ -4467,11 +4524,15 @@ export default function SeatingPlanner({
                       })}
                   </svg>
 
-                  {fixtures.map((f, idx) => {
+                  {fixtures.map((f) => {
                     const def = FIXTURE_DEFAULTS[f.type];
-                    const saved = fixturePositions[f.id];
-                    const basePos = saved ? { cx: saved.x, cy: saved.y } : defaultFixturePosition(idx);
+                    const fl = room.fixtures[f.id];
+                    if (!fl) return null;
+                    const dims = { w: fl.w, h: fl.h };
+                    const basePos = { cx: fl.cx, cy: fl.cy };
                     const pos = dragFixture && dragFixture.id === f.id ? { cx: dragFixture.x, cy: dragFixture.y } : basePos;
+                    // Label grows with the fixture so a big dance floor isn't labelled in 11px type.
+                    const labelPx = Math.round(Math.max(11, Math.min(30, Math.min(dims.w, dims.h) * 0.14)));
                     const beginFixtureDrag = (startClientX: number, startClientY: number) => {
                       const startX = pos.cx;
                       const startY = pos.cy;
@@ -4480,8 +4541,8 @@ export default function SeatingPlanner({
                       map.beginItemDrag();
                       setDragFixture({ id: f.id, x: startX, y: startY });
                       const compute = (clientX: number, clientY: number) => ({
-                        x: Math.max(def.w / 2, startX + (clientX - startClientX) / zoom),
-                        y: Math.max(def.h / 2, startY + (clientY - startClientY) / zoom),
+                        x: Math.max(dims.w / 2, startX + (clientX - startClientX) / zoom),
+                        y: Math.max(dims.h / 2, startY + (clientY - startClientY) / zoom),
                       });
                       const onMouseMove = (ev: MouseEvent) => setDragFixture({ id: f.id, ...compute(ev.clientX, ev.clientY) });
                       const onMouseUp = (ev: MouseEvent) => {
@@ -4546,18 +4607,18 @@ export default function SeatingPlanner({
                         className="absolute flex items-center justify-center text-center px-2 group"
                         style={{
                           boxShadow: selectedFixtureId === f.id ? `0 0 0 3px ${C.goldSoft}` : undefined,
-                          left: pos.cx - def.w / 2,
-                          top: pos.cy - def.h / 2,
-                          width: def.w,
-                          height: def.h,
-                          borderRadius: 16,
+                          left: pos.cx - dims.w / 2,
+                          top: pos.cy - dims.h / 2,
+                          width: dims.w,
+                          height: dims.h,
+                          borderRadius: Math.min(16, dims.h / 4),
                           border: `2px dashed ${def.border}`,
                           backgroundColor: def.fill,
                           cursor: readOnly ? "default" : "move",
                           touchAction: "none",
                         }}
                       >
-                        <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: def.border }}>
+                        <span className="font-semibold uppercase tracking-wide leading-tight" style={{ color: def.border, fontSize: labelPx }}>
                           {f.label ?? def.label}
                         </span>
                         {!readOnly && (
@@ -4589,6 +4650,8 @@ export default function SeatingPlanner({
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
                           >
+                            <MapMenuButton icon={<Minus size={13} />} label="Smaller" hideLabel onClick={() => resizeFixture(f.id, -0.15)} />
+                            <MapMenuButton icon={<Plus size={13} />} label="Bigger" hideLabel onClick={() => resizeFixture(f.id, 0.15)} />
                             <MapMenuButton
                               icon={<Move size={13} />}
                               label="Move"
