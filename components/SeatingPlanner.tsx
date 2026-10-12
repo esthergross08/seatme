@@ -263,6 +263,9 @@ interface PlannerData {
   deletedTableIds?: string[];
   // Per-table rotation in degrees (clockwise), keyed by table id.
   tableRotations?: Record<string, number>;
+  // Empty tables that auto-generate left out ("unused tables"), hidden from the
+  // map until someone is seated there. Saved so they stay hidden after a reload.
+  hiddenTableIds?: string[];
   floorPlan?: FloorPlan | null;
   fixtures?: Fixture[];
   fixturePositions?: Record<string, { x: number; y: number }>;
@@ -1141,7 +1144,10 @@ export default function SeatingPlanner({
   const [newGuestName, setNewGuestName] = useState("");
   const [fillMode, setFillMode] = useState<FillMode>(initialData?.fillMode ?? "spread");
   const [minimizeChanges, setMinimizeChanges] = useState(true);
-  const [activeTableIds, setActiveTableIds] = useState<Set<string> | null>(null);
+  // Stored as the tables to hide (not the ones to show), so tables added later
+  // appear automatically instead of being hidden by an old auto-generate.
+  const [hiddenTableIds, setHiddenTableIds] = useState<string[]>(initialData?.hiddenTableIds ?? []);
+  const hiddenTableSet = useMemo(() => new Set(hiddenTableIds), [hiddenTableIds]);
   const [showAllTables, setShowAllTables] = useState(false);
   const [tableNameOverrides, setTableNameOverrides] = useState<Record<string, string>>(
     initialData?.tableNameOverrides ?? {}
@@ -1290,6 +1296,7 @@ export default function SeatingPlanner({
             tablePositions,
             deletedTableIds,
             tableRotations,
+            hiddenTableIds,
             floorPlan,
             fixtures,
             fixturePositions,
@@ -1323,6 +1330,7 @@ export default function SeatingPlanner({
     tablePositions,
     deletedTableIds,
     tableRotations,
+    hiddenTableIds,
     floorPlan,
     fixtures,
     fixturePositions,
@@ -1353,11 +1361,15 @@ export default function SeatingPlanner({
   }, [seatAssignment, seatsById]);
 
   const visibleTables = useMemo(() => {
-    if (!activeTableIds || showAllTables) return tables;
-    return tables.filter((t) => activeTableIds.has(t.id) || occupiedTableIds.has(t.id));
-  }, [tables, activeTableIds, showAllTables, occupiedTableIds]);
+    if (showAllTables || hiddenTableSet.size === 0) return tables;
+    return tables.filter((t) => !hiddenTableSet.has(t.id) || occupiedTableIds.has(t.id));
+  }, [tables, hiddenTableSet, showAllTables, occupiedTableIds]);
 
   const hiddenTableCount = tables.length - visibleTables.length;
+  const emptyVisibleTableIds = useMemo(
+    () => visibleTables.filter((t) => !occupiedTableIds.has(t.id)).map((t) => t.id),
+    [visibleTables, occupiedTableIds]
+  );
   const layout = useMemo(
     () => computeLayout(visibleTables, tablePositions, canvasBudget),
     [visibleTables, tablePositions, canvasBudget]
@@ -1859,10 +1871,6 @@ export default function SeatingPlanner({
     });
   }, [seatsById, guestById]);
 
-  useEffect(() => {
-    setActiveTableIds(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableGroups]);
 
   useEffect(() => {
     if (!importSuccess) return;
@@ -2555,19 +2563,19 @@ export default function SeatingPlanner({
   function clearAllSeats() {
     if (readOnly) return;
     setSeatAssignment({});
-    setActiveTableIds(null);
+    setHiddenTableIds([]);
     setJustGenerated(false);
     setPicked(null);
   }
   function clearAllSeatsWithUndo() {
     if (readOnly || seatedCount === 0) return;
     const prevSeatAssignment = seatAssignment;
-    const prevActiveTableIds = activeTableIds;
+    const prevHiddenTableIds = hiddenTableIds;
     const prevJustGenerated = justGenerated;
     clearAllSeats();
     pushUndo("Cleared all seats.", () => {
       setSeatAssignment(prevSeatAssignment);
-      setActiveTableIds(prevActiveTableIds);
+      setHiddenTableIds(prevHiddenTableIds);
       setJustGenerated(prevJustGenerated);
     });
   }
@@ -2599,7 +2607,7 @@ export default function SeatingPlanner({
         autoGroupPairs
       );
       setSeatAssignment(result);
-      setActiveTableIds(new Set(chosenIds));
+      setHiddenTableIds(tables.filter((t) => !chosenIds.includes(t.id)).map((t) => t.id));
       setShowAllTables(false);
       setSolving(false);
       setJustGenerated(true);
@@ -2956,7 +2964,7 @@ export default function SeatingPlanner({
           }
           case "clear_seating": {
             workingSeatAssignment = {};
-            setActiveTableIds(null);
+            setHiddenTableIds([]);
             setJustGenerated(false);
             break;
           }
@@ -3025,7 +3033,10 @@ export default function SeatingPlanner({
               minimizeChanges ? workingSeatAssignment : {},
               workingAutoGroupPairs
             );
-            setActiveTableIds(new Set(poolTables.map((t) => t.id)));
+            {
+              const poolIds = new Set(poolTables.map((t) => t.id));
+              setHiddenTableIds(workingTables.filter((t) => !poolIds.has(t.id)).map((t) => t.id));
+            }
             setShowAllTables(false);
             setJustGenerated(true);
             break;
@@ -4528,6 +4539,19 @@ export default function SeatingPlanner({
                   <input type="checkbox" checked={showAllTables} onChange={(e) => setShowAllTables(e.target.checked)} />
                   Show {hiddenTableCount} unused table{hiddenTableCount > 1 ? "s" : ""}
                 </label>
+              )}
+              {!readOnly && !showAllTables && seatedCount > 0 && emptyVisibleTableIds.length > 0 && (
+                <button
+                  onClick={() => {
+                    const prev = hiddenTableIds;
+                    setHiddenTableIds(Array.from(new Set([...hiddenTableIds, ...emptyVisibleTableIds])));
+                    pushUndo(`Hid ${emptyVisibleTableIds.length} empty table${emptyVisibleTableIds.length > 1 ? "s" : ""}.`, () => setHiddenTableIds(prev));
+                  }}
+                  className="text-xs font-semibold underline"
+                  style={{ color: C.gold }}
+                >
+                  Hide {emptyVisibleTableIds.length} empty table{emptyVisibleTableIds.length > 1 ? "s" : ""}
+                </button>
               )}
             </div>
 

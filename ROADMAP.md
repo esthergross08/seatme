@@ -134,6 +134,8 @@ PowerPoint-style fixture sizing (2026-10-12): tap a dance floor, bar or stage to
 
 Turning objects (2026-10-12): dance floor, bar, stage and non-round tables can be rotated. Selecting one shows a round rotate handle below it (drag to turn; snaps to 45° within 4°, Shift = 15° steps; live angle readout), plus a "Turn 90°" button in the menu ("Turn 45°" for square tables) as the no-drag option. Fixtures store `rot`; tables store `tableRotations[tableId]` in the event data. Table bodies rotate with CSS while seat positions are rotated mathematically (`rotateOffset`), so name tags stay upright; the table name counter-rotates. Fixture resize handles work in the fixture's own turned frame. Conflict lines, guest-search highlights and make-room collision boxes (rotated bounding boxes) all account for rotation, and turning something into its neighbours triggers make-room like a resize. Round tables have no turn control (nothing would change).
 
+Fix: hidden unused tables reappearing (2026-10-12). After auto-generate (consolidate mode) the unused tables were hidden via `activeTableIds`, which was never saved and was reset by an effect on every `tableGroups` change, so a reload, any app update, or a table Bigger/Smaller brought them all back. Now stored as `hiddenTableIds` (the ones to hide, so newly added tables still appear) in the event data, and no longer reset by table-type edits; only Clear tables / clear_seating un-hide everything. Added a "Hide N empty tables" link next to "Show N unused tables" (with undo) to tidy the map at any time, and to restore plans that lost their hidden set before this fix.
+
 ## Planned: next up (queued 2026-09-28)
 
 Three items Esther flagged to work through after the constraints-on-guest-row change above:
