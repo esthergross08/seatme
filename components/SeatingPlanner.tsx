@@ -450,6 +450,80 @@ function minSeatSpacing(shape: TableShape, w: number, h: number, n: number, pad:
   return min;
 }
 
+// ---- Make-room-on-resize ----
+// Footprint of something on the floor plan, as an axis-aligned box around its
+// centre (half-width/half-height already include breathing room).
+interface FloorBox {
+  id: string;
+  cx: number;
+  cy: number;
+  hw: number;
+  hh: number;
+}
+
+// When the `anchors` (things that just got bigger) overlap their neighbours,
+// nudge the neighbours apart: repeated passes push each overlapping pair apart
+// along the shorter direction (anchors never move; two non-anchors split the
+// push), and anything that gets pushed can push what it now touches, rippling
+// outward. Things not involved stay put. If the result spills past the top or
+// left edge, the whole plan is shifted right/down to keep it all on the canvas.
+// Returns new centres for everything whose position changed, plus how many
+// items were actually pushed (vs. just shifted along with the whole plan).
+function makeRoom(
+  boxes: FloorBox[],
+  anchors: Set<string>
+): { positions: Record<string, { x: number; y: number }>; pushed: string[] } {
+  const items = boxes.map((b) => ({ ...b }));
+  const active = new Set(Array.from(anchors).filter((id) => items.some((b) => b.id === id)));
+  const pushed = new Set<string>();
+  for (let pass = 0; pass < 200; pass++) {
+    let any = false;
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const a = items[i];
+        const b = items[j];
+        if (!active.has(a.id) && !active.has(b.id)) continue;
+        const ox = a.hw + b.hw - Math.abs(a.cx - b.cx);
+        const oy = a.hh + b.hh - Math.abs(a.cy - b.cy);
+        if (ox <= 0.5 || oy <= 0.5) continue;
+        const aFixed = anchors.has(a.id);
+        const bFixed = anchors.has(b.id);
+        if (aFixed && bFixed) continue; // two things the user resized — leave them be
+        any = true;
+        const shareA = aFixed ? 0 : bFixed ? 1 : 0.5;
+        const shareB = 1 - shareA;
+        if (ox <= oy) {
+          const dir = Math.sign(b.cx - a.cx) || 1;
+          a.cx -= dir * ox * shareA;
+          b.cx += dir * ox * shareB;
+        } else {
+          const dir = Math.sign(b.cy - a.cy) || 1;
+          a.cy -= dir * oy * shareA;
+          b.cy += dir * oy * shareB;
+        }
+        [a, b].forEach((x) => {
+          if (!anchors.has(x.id)) {
+            pushed.add(x.id);
+            active.add(x.id);
+          }
+        });
+      }
+    }
+    if (!any) break;
+  }
+  const original = new Map(boxes.map((b) => [b.id, b]));
+  const shiftX = Math.max(0, -Math.min(...items.map((b) => b.cx - b.hw)));
+  const shiftY = Math.max(0, -Math.min(...items.map((b) => b.cy - b.hh)));
+  const positions: Record<string, { x: number; y: number }> = {};
+  items.forEach((b) => {
+    const o = original.get(b.id)!;
+    const x = Math.round(b.cx + shiftX);
+    const y = Math.round(b.cy + shiftY);
+    if (Math.abs(x - o.cx) > 0.5 || Math.abs(y - o.cy) > 0.5) positions[b.id] = { x, y };
+  });
+  return { positions, pushed: Array.from(pushed) };
+}
+
 function computeLayout(
   tables: Table[],
   positionOverrides: Record<string, { x: number; y: number }> = {},
@@ -1270,6 +1344,60 @@ export default function SeatingPlanner({
   }, [fixtures, fixturePositions, fixtureGuestCount, layout.width, layout.height, layout.scale]);
 
   const map = useMapViewport(room.width, room.height);
+
+  // General rule: when anything on the floor plan gets bigger — Bigger/Smaller,
+  // the resize handle, more seats, a different shape, a longer name, a dance
+  // floor growing with the guest list — whatever it now overlaps is nudged aside.
+  // Detected by comparing each item's size with the previous render, so every
+  // kind of resize is covered without each one having to remember to call it.
+  const prevFootprints = useRef<{ scale: number; sizes: Record<string, { w: number; h: number }> } | null>(null);
+  useEffect(() => {
+    const sizes: Record<string, { w: number; h: number }> = {};
+    Object.entries(layout.positions).forEach(([id, p]) => (sizes[`t:${id}`] = { w: p.w, h: p.h }));
+    Object.entries(room.fixtures).forEach(([id, p]) => (sizes[`f:${id}`] = { w: p.w, h: p.h }));
+    const prev = prevFootprints.current;
+    prevFootprints.current = { scale: layout.scale, sizes };
+    // Skip the first look, view-only access, mid-drag, and whole-plan rescaling
+    // (the layout auto-zooming small plans changes every size at once — that's
+    // not someone resizing a thing).
+    if (!prev || readOnly || dragTable || resizingGroupId || prev.scale !== layout.scale) return;
+    const grown = new Set(
+      Object.keys(sizes).filter((k) => prev.sizes[k] && (sizes[k].w > prev.sizes[k].w + 0.5 || sizes[k].h > prev.sizes[k].h + 0.5))
+    );
+    if (grown.size === 0) return;
+
+    // Tables: seats sit 34px out from the edge and name tags reach ~30px past that.
+    const boxes: FloorBox[] = [
+      ...Object.entries(layout.positions).map(([id, p]) => ({ id: `t:${id}`, cx: p.cx, cy: p.cy, hw: p.w / 2 + 64, hh: p.h / 2 + 64 })),
+      ...Object.entries(room.fixtures).map(([id, p]) => ({ id: `f:${id}`, cx: p.cx, cy: p.cy, hw: p.w / 2 + 20, hh: p.h / 2 + 20 })),
+    ];
+    const { positions: moved, pushed } = makeRoom(boxes, grown);
+    if (pushed.length === 0) return;
+
+    // Pin everything where it's drawn now (plus the moves), so tables that were
+    // auto-placed don't reflow into new spots once some of them are pinned.
+    const prevTablePositions = tablePositions;
+    const prevFixturePositions = fixturePositions;
+    const nextTables: Record<string, { x: number; y: number }> = { ...tablePositions };
+    Object.entries(layout.positions).forEach(([id, p]) => (nextTables[id] = moved[`t:${id}`] ?? { x: p.cx, y: p.cy }));
+    const nextFixtures: Record<string, { x: number; y: number }> = { ...fixturePositions };
+    Object.entries(room.fixtures).forEach(([id, p]) => (nextFixtures[id] = moved[`f:${id}`] ?? { x: p.cx, y: p.cy }));
+    setTablePositions(nextTables);
+    setFixturePositions(nextFixtures);
+
+    const tableCount = pushed.filter((k) => k.startsWith("t:")).length;
+    const otherCount = pushed.length - tableCount;
+    const parts = [
+      tableCount ? `${tableCount} table${tableCount > 1 ? "s" : ""}` : "",
+      otherCount ? `${otherCount} other item${otherCount > 1 ? "s" : ""}` : "",
+    ].filter(Boolean);
+    pushUndo(`Moved ${parts.join(" and ")} to make room.`, () => {
+      setTablePositions(prevTablePositions);
+      setFixturePositions(prevFixturePositions);
+    });
+    // Only re-run when sizes/positions change; the state read above is current for this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout, room]);
   useEffect(() => {
     if (!map.size.width || !map.size.height) return;
     const width = Math.max(320, map.size.width - 32);
