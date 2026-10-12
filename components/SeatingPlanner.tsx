@@ -34,6 +34,7 @@ import {
   Move,
   Pencil,
   MapPin,
+  RotateCw,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -149,6 +150,8 @@ interface Fixture {
   // Unset = auto size (dance floor follows the guest count).
   wM?: number;
   hM?: number;
+  // Rotation in degrees, clockwise (0 = as added).
+  rot?: number;
 }
 const FIXTURE_DEFAULTS: Record<FixtureType, { label: string; fill: string; border: string }> = {
   danceFloor: { label: "Dance floor", fill: "#E8EFE4", border: C.sage },
@@ -258,6 +261,8 @@ interface PlannerData {
   // without changing the group's count — so they can be added back exactly as
   // they were, same name and position.
   deletedTableIds?: string[];
+  // Per-table rotation in degrees (clockwise), keyed by table id.
+  tableRotations?: Record<string, number>;
   floorPlan?: FloorPlan | null;
   fixtures?: Fixture[];
   fixturePositions?: Record<string, { x: number; y: number }>;
@@ -462,6 +467,33 @@ function minSeatSpacing(shape: TableShape, w: number, h: number, n: number, pad:
     }
   }
   return min;
+}
+
+// ---- Rotation helpers ----
+const normDeg = (d: number) => ((Math.round(d) % 360) + 360) % 360;
+// Rotate an offset (dx, dy) clockwise by `deg`.
+function rotateOffset(dx: number, dy: number, deg: number) {
+  if (!deg) return { dx, dy };
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  return { dx: dx * c - dy * s, dy: dx * s + dy * c };
+}
+// Half-extents of the axis-aligned box around a w×h rectangle turned by `deg`.
+function rotatedHalfExtents(hw: number, hh: number, deg: number) {
+  if (!deg) return { hw, hh };
+  const r = (deg * Math.PI) / 180;
+  const c = Math.abs(Math.cos(r));
+  const s = Math.abs(Math.sin(r));
+  return { hw: hw * c + hh * s, hh: hw * s + hh * c };
+}
+// Snap while turning: sticks to multiples of 45° when within 4°, else whole
+// degrees; with Shift, 15° steps (as in PowerPoint).
+function snapDeg(d: number, fine15: boolean) {
+  const n = ((d % 360) + 360) % 360;
+  if (fine15) return normDeg(Math.round(n / 15) * 15);
+  const near45 = Math.round(n / 45) * 45;
+  return Math.abs(n - near45) <= 4 ? normDeg(near45) : normDeg(n);
 }
 
 // ---- Make-room-on-resize ----
@@ -1118,6 +1150,9 @@ export default function SeatingPlanner({
     initialData?.tablePositions ?? {}
   );
   const [fixtures, setFixtures] = useState<Fixture[]>(initialData?.fixtures ?? []);
+  const [tableRotations, setTableRotations] = useState<Record<string, number>>(initialData?.tableRotations ?? {});
+  // Live preview while dragging a rotate handle.
+  const [rotating, setRotating] = useState<{ kind: "table" | "fixture"; id: string; deg: number } | null>(null);
   const [fixturePositions, setFixturePositions] = useState<Record<string, { x: number; y: number }>>(
     initialData?.fixturePositions ?? {}
   );
@@ -1254,6 +1289,7 @@ export default function SeatingPlanner({
             tableNameOverrides,
             tablePositions,
             deletedTableIds,
+            tableRotations,
             floorPlan,
             fixtures,
             fixturePositions,
@@ -1286,6 +1322,7 @@ export default function SeatingPlanner({
     tableNameOverrides,
     tablePositions,
     deletedTableIds,
+    tableRotations,
     floorPlan,
     fixtures,
     fixturePositions,
@@ -1363,6 +1400,66 @@ export default function SeatingPlanner({
 
   const map = useMapViewport(room.width, room.height);
 
+  const tableRot = (id: string) => (rotating?.kind === "table" && rotating.id === id ? rotating.deg : tableRotations[id] || 0);
+  const fixtureRot = (f: Fixture) => (rotating?.kind === "fixture" && rotating.id === f.id ? rotating.deg : f.rot || 0);
+
+  // Drag a rotate handle around an item's centre (room coords cx, cy).
+  function beginRotate(
+    e: React.PointerEvent<HTMLElement>,
+    kind: "table" | "fixture",
+    id: string,
+    cx: number,
+    cy: number,
+    startDeg: number,
+    commit: (deg: number) => void
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    map.beginItemDrag();
+    const p0 = map.toRoom(e.clientX, e.clientY);
+    const a0 = Math.atan2(p0.y - cy, p0.x - cx);
+    let deg = startDeg;
+    setRotating({ kind, id, deg });
+    const onMove = (ev: PointerEvent) => {
+      const p = map.toRoom(ev.clientX, ev.clientY);
+      const a = Math.atan2(p.y - cy, p.x - cx);
+      deg = snapDeg(startDeg + ((a - a0) * 180) / Math.PI, ev.shiftKey);
+      setRotating({ kind, id, deg });
+    };
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+      map.endItemDrag();
+      commit(deg);
+      setRotating(null);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  }
+  function setTableRotation(tableId: string, deg: number) {
+    if (readOnly) return;
+    // Pin an auto-placed table where it's drawn, so turning it doesn't reflow the grid.
+    const pos = layout.positions[tableId];
+    if (pos && !tablePositions[tableId]) setTablePositions((m) => ({ ...m, [tableId]: { x: pos.cx, y: pos.cy } }));
+    setTableRotations((m) => {
+      const next = { ...m };
+      const d = normDeg(deg);
+      if (d === 0) delete next[tableId];
+      else next[tableId] = d;
+      return next;
+    });
+  }
+  function setFixtureRotation(fixtureId: string, deg: number) {
+    if (readOnly) return;
+    const fl = room.fixtures[fixtureId];
+    if (fl && !fixturePositions[fixtureId]) setFixturePositions((m) => ({ ...m, [fixtureId]: { x: fl.cx, y: fl.cy } }));
+    setFixtures((list) => list.map((x) => (x.id === fixtureId ? { ...x, rot: normDeg(deg) || undefined } : x)));
+  }
+
   // General rule: when anything on the floor plan gets bigger — Bigger/Smaller,
   // the resize handle, more seats, a different shape, a longer name, a dance
   // floor growing with the guest list — whatever it now overlaps is nudged aside.
@@ -1370,15 +1467,26 @@ export default function SeatingPlanner({
   // kind of resize is covered without each one having to remember to call it.
   const prevFootprints = useRef<{ scale: number; sizes: Record<string, { w: number; h: number }> } | null>(null);
   useEffect(() => {
+    // Footprints as the axis-aligned box each item covers — so turning a long
+    // table or the bar counts as "getting bigger" in the directions it now reaches.
+    const fxById = Object.fromEntries(fixtures.map((f) => [f.id, f]));
+    const tableBox = (id: string, p: { w: number; h: number }) => rotatedHalfExtents(p.w / 2 + 64, p.h / 2 + 64, tableRotations[id] || 0);
+    const fixtureBox = (id: string, p: { w: number; h: number }) => rotatedHalfExtents(p.w / 2 + 20, p.h / 2 + 20, fxById[id]?.rot || 0);
     const sizes: Record<string, { w: number; h: number }> = {};
-    Object.entries(layout.positions).forEach(([id, p]) => (sizes[`t:${id}`] = { w: p.w, h: p.h }));
-    Object.entries(room.fixtures).forEach(([id, p]) => (sizes[`f:${id}`] = { w: p.w, h: p.h }));
+    Object.entries(layout.positions).forEach(([id, p]) => {
+      const b = tableBox(id, p);
+      sizes[`t:${id}`] = { w: b.hw * 2, h: b.hh * 2 };
+    });
+    Object.entries(room.fixtures).forEach(([id, p]) => {
+      const b = fixtureBox(id, p);
+      sizes[`f:${id}`] = { w: b.hw * 2, h: b.hh * 2 };
+    });
     const prev = prevFootprints.current;
     prevFootprints.current = { scale: layout.scale, sizes };
     // Skip the first look, view-only access, mid-drag, and whole-plan rescaling
     // (the layout auto-zooming small plans changes every size at once — that's
     // not someone resizing a thing).
-    if (!prev || readOnly || dragTable || resizingGroupId || fixtureResize || prev.scale !== layout.scale) return;
+    if (!prev || readOnly || dragTable || resizingGroupId || fixtureResize || rotating || prev.scale !== layout.scale) return;
     const grown = new Set(
       Object.keys(sizes).filter((k) => prev.sizes[k] && (sizes[k].w > prev.sizes[k].w + 0.5 || sizes[k].h > prev.sizes[k].h + 0.5))
     );
@@ -1386,8 +1494,8 @@ export default function SeatingPlanner({
 
     // Tables: seats sit 34px out from the edge and name tags reach ~30px past that.
     const boxes: FloorBox[] = [
-      ...Object.entries(layout.positions).map(([id, p]) => ({ id: `t:${id}`, cx: p.cx, cy: p.cy, hw: p.w / 2 + 64, hh: p.h / 2 + 64 })),
-      ...Object.entries(room.fixtures).map(([id, p]) => ({ id: `f:${id}`, cx: p.cx, cy: p.cy, hw: p.w / 2 + 20, hh: p.h / 2 + 20 })),
+      ...Object.entries(layout.positions).map(([id, p]) => ({ id: `t:${id}`, cx: p.cx, cy: p.cy, ...tableBox(id, p) })),
+      ...Object.entries(room.fixtures).map(([id, p]) => ({ id: `f:${id}`, cx: p.cx, cy: p.cy, ...fixtureBox(id, p) })),
     ];
     const { positions: moved, pushed } = makeRoom(boxes, grown);
     if (pushed.length === 0) return;
@@ -1415,7 +1523,7 @@ export default function SeatingPlanner({
     });
     // Only re-run when sizes/positions change; the state read above is current for this render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, room]);
+  }, [layout, room, tableRotations, fixtures]);
   useEffect(() => {
     if (!map.size.width || !map.size.height) return;
     const width = Math.max(320, map.size.width - 32);
@@ -1779,7 +1887,8 @@ export default function SeatingPlanner({
     const pos = layout.positions[s.tableId];
     const table = tableById[s.tableId];
     const shape = table?.shape ?? "round";
-    const { dx, dy } = seatOffset(shape, pos.w, pos.h, s.seatIdx, s.capacity, 34, table?.headCount, table?.footCount);
+    const o = seatOffset(shape, pos.w, pos.h, s.seatIdx, s.capacity, 34, table?.headCount, table?.footCount);
+    const { dx, dy } = rotateOffset(o.dx, o.dy, tableRotations[s.tableId] || 0);
     return { x: pos.cx + dx, y: pos.cy + dy };
   }
 
@@ -4684,6 +4793,10 @@ export default function SeatingPlanner({
                     const basePos = live ? { cx: live.cx, cy: live.cy } : { cx: fl.cx, cy: fl.cy };
                     const pos = dragFixture && dragFixture.id === f.id ? { cx: dragFixture.x, cy: dragFixture.y } : basePos;
                     const pxPerM = PX_PER_M * layout.scale;
+                    const rot = fixtureRot(f);
+                    const isRotatingThis = rotating?.kind === "fixture" && rotating.id === f.id;
+                    // Half-height of the area the turned fixture covers — where the menu and size box go.
+                    const coverHH = rotatedHalfExtents(dims.w / 2, dims.h / 2, rot).hh;
                     const sizeLabel = `${formatM(dims.w / pxPerM)} × ${formatM(dims.h / pxPerM)} m`;
 
                     // PowerPoint-style resize: drag a side to change one dimension, a
@@ -4696,18 +4809,26 @@ export default function SeatingPlanner({
                       handle.setPointerCapture(e.pointerId);
                       const zoom = map.getScale();
                       map.beginItemDrag();
-                      const start = { l: pos.cx - dims.w / 2, r: pos.cx + dims.w / 2, t: pos.cy - dims.h / 2, b: pos.cy + dims.h / 2 };
+                      // Work in the fixture's own (turned) frame, centred on it.
+                      const start = { l: -dims.w / 2, r: dims.w / 2, t: -dims.h / 2, b: dims.h / 2 };
+                      const c0 = { x: pos.cx, y: pos.cy };
+                      const rr = (rot * Math.PI) / 180;
+                      const cosR = Math.cos(rr);
+                      const sinR = Math.sin(rr);
                       const minPx = FIXTURE_MIN_M * pxPerM;
                       const sx = e.clientX;
                       const sy = e.clientY;
                       const aspect = dims.w / dims.h;
                       const compute = (clientX: number, clientY: number, keepAspect: boolean) => {
                         let { l, r, t, b } = start;
-                        const dx = (clientX - sx) / zoom;
-                        const dy = (clientY - sy) / zoom;
-                        if (hx === -1) l = Math.min(r - minPx, Math.max(0, l + dx));
+                        const sdx = (clientX - sx) / zoom;
+                        const sdy = (clientY - sy) / zoom;
+                        // Screen drag → the fixture's own axes.
+                        const dx = sdx * cosR + sdy * sinR;
+                        const dy = -sdx * sinR + sdy * cosR;
+                        if (hx === -1) l = Math.min(r - minPx, l + dx);
                         if (hx === 1) r = Math.max(l + minPx, r + dx);
-                        if (hy === -1) t = Math.min(b - minPx, Math.max(0, t + dy));
+                        if (hy === -1) t = Math.min(b - minPx, t + dy);
                         if (hy === 1) b = Math.max(t + minPx, b + dy);
                         if (keepAspect && hx !== 0 && hy !== 0) {
                           const w = r - l;
@@ -4722,7 +4843,8 @@ export default function SeatingPlanner({
                             else r = l + nw;
                           }
                         }
-                        return { id: f.id, cx: (l + r) / 2, cy: (t + b) / 2, w: r - l, h: b - t };
+                        const lc = rotateOffset((l + r) / 2, (t + b) / 2, rot);
+                        return { id: f.id, cx: c0.x + lc.dx, cy: c0.y + lc.dy, w: r - l, h: b - t };
                       };
                       let last = compute(sx, sy, false);
                       setFixtureResize(last);
@@ -4805,64 +4927,148 @@ export default function SeatingPlanner({
                       if (readOnly) return;
                       startLongPress(e, beginFixtureDrag);
                     };
+                    const selectedHere = selectedFixtureId === f.id && !readOnly && dragFixture?.id !== f.id;
+                    const zoom = map.view.scale;
                     return (
-                      <div
-                        key={f.id}
-                        data-map-item
-                        onMouseDown={startFixtureDrag}
-                        onTouchStart={startFixtureDragTouch}
-                        onClick={() => {
-                          if (tableJustDragged.current) {
-                            tableJustDragged.current = false;
-                            return;
-                          }
-                          if (movingItem) return; // the map's click handler places the item
-                          setSelectedTableId(null);
-                          setSelectedFixtureId(f.id);
-                        }}
-                        className="absolute flex items-center justify-center text-center px-2 group"
-                        style={{
-                          boxShadow: selectedFixtureId === f.id ? `0 0 0 3px ${C.goldSoft}` : undefined,
-                          left: pos.cx - dims.w / 2,
-                          top: pos.cy - dims.h / 2,
-                          width: dims.w,
-                          height: dims.h,
-                          borderRadius: Math.min(16, dims.h / 4),
-                          border: `2px dashed ${def.border}`,
-                          backgroundColor: def.fill,
-                          cursor: readOnly ? "default" : "move",
-                          touchAction: "none",
-                        }}
-                      >
-                        <span className="font-semibold uppercase tracking-wide leading-tight" style={{ color: def.border, fontSize: labelPx }}>
-                          {f.label ?? def.label}
-                        </span>
-                        {!readOnly && (
-                          <button
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onTouchStart={(e) => e.stopPropagation()}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeFixtureWithUndo(f.id);
-                            }}
-                            aria-label={`Remove ${f.label ?? def.label}`}
-                            className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                            style={{ backgroundColor: "#fff", border: `1px solid ${def.border}`, color: def.border }}
-                          >
-                            <X size={11} />
-                          </button>
-                        )}
-                        {selectedFixtureId === f.id && !readOnly && dragFixture?.id !== f.id && (
+                      // Zero-size anchor at the fixture's centre: the shape inside it turns,
+                      // while its menu, size box and readouts stay upright.
+                      <div key={f.id} className="absolute" style={{ left: pos.cx, top: pos.cy, width: 0, height: 0 }}>
+                        <div
+                          data-map-item
+                          onMouseDown={startFixtureDrag}
+                          onTouchStart={startFixtureDragTouch}
+                          onClick={() => {
+                            if (tableJustDragged.current) {
+                              tableJustDragged.current = false;
+                              return;
+                            }
+                            if (movingItem) return; // the map's click handler places the item
+                            setSelectedTableId(null);
+                            setSelectedFixtureId(f.id);
+                          }}
+                          className="absolute flex items-center justify-center text-center px-2 group"
+                          style={{
+                            boxShadow: selectedFixtureId === f.id ? `0 0 0 3px ${C.goldSoft}` : undefined,
+                            left: -dims.w / 2,
+                            top: -dims.h / 2,
+                            width: dims.w,
+                            height: dims.h,
+                            transform: rot ? `rotate(${rot}deg)` : undefined,
+                            borderRadius: Math.min(16, dims.h / 4),
+                            border: `2px dashed ${def.border}`,
+                            backgroundColor: def.fill,
+                            cursor: readOnly ? "default" : "move",
+                            touchAction: "none",
+                          }}
+                        >
+                          <span className="font-semibold uppercase tracking-wide leading-tight" style={{ color: def.border, fontSize: labelPx }}>
+                            {f.label ?? def.label}
+                          </span>
+                          {!readOnly && (
+                            <button
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onTouchStart={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeFixtureWithUndo(f.id);
+                              }}
+                              aria-label={`Remove ${f.label ?? def.label}`}
+                              className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              style={{ backgroundColor: "#fff", border: `1px solid ${def.border}`, color: def.border }}
+                            >
+                              <X size={11} />
+                            </button>
+                          )}
+                          {(selectedHere || live || isRotatingThis) && (
+                            <>
+                              {/* eight PowerPoint-style resize handles — they turn with the shape */}
+                              {(
+                                [
+                                  [-1, -1, "nwse-resize"],
+                                  [0, -1, "ns-resize"],
+                                  [1, -1, "nesw-resize"],
+                                  [1, 0, "ew-resize"],
+                                  [1, 1, "nwse-resize"],
+                                  [0, 1, "ns-resize"],
+                                  [-1, 1, "nesw-resize"],
+                                  [-1, 0, "ew-resize"],
+                                ] as [-1 | 0 | 1, -1 | 0 | 1, string][]
+                              ).map(([hx, hy, cursor]) => (
+                                <div
+                                  key={`${hx},${hy}`}
+                                  data-map-control
+                                  role="presentation"
+                                  onPointerDown={(e) => beginFixtureResize(e, hx, hy)}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onTouchStart={(e) => e.stopPropagation()}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="absolute z-10 flex items-center justify-center"
+                                  style={{
+                                    // 32px finger target around a 12px visible square, constant on screen.
+                                    width: 32,
+                                    height: 32,
+                                    left: `${50 + hx * 50}%`,
+                                    top: `${50 + hy * 50}%`,
+                                    transform: `translate(-50%, -50%) scale(${1 / zoom})`,
+                                    cursor,
+                                    touchAction: "none",
+                                  }}
+                                >
+                                  <span
+                                    className="block rounded-sm"
+                                    style={{ width: 12, height: 12, backgroundColor: "#fff", border: `2px solid ${def.border}`, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
+                                  />
+                                </div>
+                              ))}
+                              {/* rotate handle, below the bottom edge */}
+                              <div
+                                className="absolute pointer-events-none"
+                                style={{ left: "50%", top: "100%", width: 2 / zoom, height: 30 / zoom, marginLeft: -1 / zoom, backgroundColor: def.border }}
+                              />
+                              <div
+                                data-map-control
+                                role="presentation"
+                                title="Drag to turn (Shift: 15° steps)"
+                                onPointerDown={(e) => beginRotate(e, "fixture", f.id, pos.cx, pos.cy, rot, (d) => setFixtureRotation(f.id, d))}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                className="absolute z-10 flex items-center justify-center"
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  left: "50%",
+                                  top: `calc(100% + ${30 / zoom}px)`,
+                                  transform: `translate(-50%, -50%) scale(${1 / zoom})`,
+                                  cursor: "grab",
+                                  touchAction: "none",
+                                }}
+                              >
+                                <span
+                                  className="flex items-center justify-center rounded-full"
+                                  style={{ width: 22, height: 22, backgroundColor: "#fff", border: `2px solid ${def.border}`, color: def.border, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
+                                >
+                                  <RotateCw size={12} />
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {selectedHere && !live && !isRotatingThis && (
                           <div
                             data-map-control
-                            className="absolute z-30 flex items-center gap-1 rounded-full p-1 shadow-md"
+                            className="absolute z-30 flex flex-wrap justify-center items-center gap-1 rounded-3xl p-1 shadow-md"
                             style={{
-                              left: "50%",
-                              // Clear of the top resize handles (16px on screen above the edge).
-                              top: -24 / map.view.scale,
-                              transform: `translate(-50%, -100%) scale(${1 / map.view.scale})`,
+                              left: 0,
+                              // Clear of the top resize handles.
+                              top: -coverHH - 24 / zoom,
+                              transform: `translate(-50%, -100%) scale(${1 / zoom})`,
                               transformOrigin: "50% 100%",
                               backgroundColor: C.ink,
+                              // Wraps onto two rows rather than running off a phone screen.
+                              width: "max-content",
+                              maxWidth: 320,
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
@@ -4874,6 +5080,7 @@ export default function SeatingPlanner({
                               label={sizeLabel}
                               onClick={() => setSizeEditorId((cur) => (cur === f.id ? null : f.id))}
                             />
+                            <MapMenuButton icon={<RotateCw size={13} />} label="Turn 90°" hideLabel onClick={() => setFixtureRotation(f.id, rot + 90)} />
                             <MapMenuButton
                               icon={<Move size={13} />}
                               label="Move"
@@ -4892,81 +5099,40 @@ export default function SeatingPlanner({
                             />
                           </div>
                         )}
-                        {selectedFixtureId === f.id && !readOnly && dragFixture?.id !== f.id && sizeEditorId === f.id && !live && (
-                          <FixtureSizeEditor
-                            key={`${f.id}-${dims.w}-${dims.h}`}
-                            wM={dims.w / pxPerM}
-                            hM={dims.h / pxPerM}
-                            zoom={map.view.scale}
-                            border={def.border}
-                            onChange={(w, h) => setFixtureSizeM(f.id, w, h)}
-                            onAuto={
-                              f.wM || f.sizeScale
-                                ? () => {
-                                    setFixtures((list) => list.map((x) => (x.id === f.id ? { ...x, wM: undefined, hM: undefined, sizeScale: undefined } : x)));
-                                    setSizeEditorId(null);
-                                  }
-                                : undefined
-                            }
-                            autoLabel={f.type === "danceFloor" ? "Auto (fits guest count)" : "Reset to standard size"}
-                          />
+                        {selectedHere && sizeEditorId === f.id && !live && !isRotatingThis && (
+                          <div className="absolute" style={{ left: 0, top: coverHH + 56 / zoom, width: 0, height: 0 }}>
+                            <FixtureSizeEditor
+                              key={`${f.id}-${dims.w}-${dims.h}`}
+                              wM={dims.w / pxPerM}
+                              hM={dims.h / pxPerM}
+                              zoom={zoom}
+                              border={def.border}
+                              onChange={(w, h) => setFixtureSizeM(f.id, w, h)}
+                              onAuto={
+                                f.wM || f.sizeScale
+                                  ? () => {
+                                      setFixtures((list) => list.map((x) => (x.id === f.id ? { ...x, wM: undefined, hM: undefined, sizeScale: undefined } : x)));
+                                      setSizeEditorId(null);
+                                    }
+                                  : undefined
+                              }
+                              autoLabel={f.type === "danceFloor" ? "Auto (fits guest count)" : "Reset to standard size"}
+                            />
+                          </div>
                         )}
-                        {((selectedFixtureId === f.id && !readOnly && dragFixture?.id !== f.id) || live) && (
-                          <>
-                            {/* eight PowerPoint-style handles */}
-                            {(
-                              [
-                                [-1, -1, "nwse-resize"],
-                                [0, -1, "ns-resize"],
-                                [1, -1, "nesw-resize"],
-                                [1, 0, "ew-resize"],
-                                [1, 1, "nwse-resize"],
-                                [0, 1, "ns-resize"],
-                                [-1, 1, "nesw-resize"],
-                                [-1, 0, "ew-resize"],
-                              ] as [-1 | 0 | 1, -1 | 0 | 1, string][]
-                            ).map(([hx, hy, cursor]) => (
-                              <div
-                                key={`${hx},${hy}`}
-                                data-map-control
-                                role="presentation"
-                                onPointerDown={(e) => beginFixtureResize(e, hx, hy)}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onTouchStart={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                                className="absolute z-10 flex items-center justify-center"
-                                style={{
-                                  // 32px finger target around a 12px visible square, constant on screen.
-                                  width: 32,
-                                  height: 32,
-                                  left: `${50 + hx * 50}%`,
-                                  top: `${50 + hy * 50}%`,
-                                  transform: `translate(-50%, -50%) scale(${1 / map.view.scale})`,
-                                  cursor,
-                                  touchAction: "none",
-                                }}
-                              >
-                                <span
-                                  className="block rounded-sm"
-                                  style={{ width: 12, height: 12, backgroundColor: "#fff", border: `2px solid ${def.border}`, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
-                                />
-                              </div>
-                            ))}
-                            {live && (
-                              <div
-                                className="absolute z-20 whitespace-nowrap rounded-md px-2 py-1 text-xs font-semibold pointer-events-none"
-                                style={{
-                                  left: "50%",
-                                  top: "50%",
-                                  transform: `translate(-50%, -50%) scale(${1 / map.view.scale})`,
-                                  backgroundColor: C.ink,
-                                  color: "#fff",
-                                }}
-                              >
-                                {sizeLabel}
-                              </div>
-                            )}
-                          </>
+                        {(live || isRotatingThis) && (
+                          <div
+                            className="absolute z-20 whitespace-nowrap rounded-md px-2 py-1 text-xs font-semibold pointer-events-none"
+                            style={{
+                              left: 0,
+                              top: 0,
+                              transform: `translate(-50%, -50%) scale(${1 / zoom})`,
+                              backgroundColor: C.ink,
+                              color: "#fff",
+                            }}
+                          >
+                            {isRotatingThis ? `${rot}°` : sizeLabel}
+                          </div>
                         )}
                       </div>
                     );
@@ -5108,6 +5274,17 @@ export default function SeatingPlanner({
                     const liveResizeRatio =
                       isResizingThis && resizePreviewScale != null ? resizePreviewScale / (t.sizeScale || 1) : 1;
                     const renderPos = liveResizeRatio !== 1 ? { ...pos, w: pos.w * liveResizeRatio, h: pos.h * liveResizeRatio } : pos;
+                    const tRot = tableRot(t.id);
+                    const isRotatingThis = rotating?.kind === "table" && rotating.id === t.id;
+                    const canTurn = t.shape !== "round";
+                    // Half-height of what the turned table (with its seats) covers — menu sits above it.
+                    const coverHH = rotatedHalfExtents(renderPos.w / 2 + 34, renderPos.h / 2 + 34, tRot).hh;
+                    const rc = Math.abs(Math.cos((tRot * Math.PI) / 180));
+                    const rs = Math.abs(Math.sin((tRot * Math.PI) / 180));
+                    // Room for the upright table name inside the turned table.
+                    const nameWidth = Math.max(40, Math.min(renderPos.w * rc + renderPos.h * rs, renderPos.w / Math.max(rc, 0.01), renderPos.h / Math.max(rs, 0.01)) - 12);
+                    const resizeHandleOffset = rotateOffset(renderPos.w / 2, 0, tRot);
+                    const rotateHandleOffset = rotateOffset(0, renderPos.h / 2 + 34 + 46, tRot);
                     return (
                       <div key={t.id} className="group">
                         <div
@@ -5140,6 +5317,7 @@ export default function SeatingPlanner({
                             top: renderPos.cy - renderPos.h / 2,
                             width: renderPos.w,
                             height: renderPos.h,
+                            transform: tRot ? `rotate(${tRot}deg)` : undefined,
                             borderRadius: shapeRadius(t.shape),
                             borderColor: selectedTableId === t.id ? C.gold : C.goldSoft,
                             backgroundColor: "#fff",
@@ -5163,8 +5341,14 @@ export default function SeatingPlanner({
                             onMouseDown={(e) => e.stopPropagation()}
                             disabled={readOnly}
                             title="Click to rename this table"
-                            className="text-[11px] font-medium leading-tight text-center bg-transparent outline-none w-full"
-                            style={{ color: C.muted, fontFamily: "Inter, sans-serif" }}
+                            className="text-[11px] font-medium leading-tight text-center bg-transparent outline-none shrink-0"
+                            // Name stays upright and readable whichever way the table is turned.
+                            style={{
+                              color: C.muted,
+                              fontFamily: "Inter, sans-serif",
+                              width: tRot ? nameWidth : "100%",
+                              transform: tRot ? `rotate(${-tRot}deg)` : undefined,
+                            }}
                           />
                           {isResizingThis && resizePreviewScale != null && (
                             <div
@@ -5197,8 +5381,8 @@ export default function SeatingPlanner({
                             title={`Drag to resize every "${t.label.replace(/\s\d+$/, "")}" table`}
                             className="absolute rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                             style={{
-                              left: renderPos.cx + renderPos.w / 2 - 5,
-                              top: renderPos.cy - 9,
+                              left: renderPos.cx + resizeHandleOffset.dx - 5,
+                              top: renderPos.cy + resizeHandleOffset.dy - 9,
                               width: 10,
                               height: 18,
                               backgroundColor: C.gold,
@@ -5208,7 +5392,51 @@ export default function SeatingPlanner({
                             }}
                           />
                         )}
-                        {selectedTableId === t.id && !readOnly && dragTable?.id !== t.id && (() => {
+                        {selectedTableId === t.id && !readOnly && dragTable?.id !== t.id && canTurn && (
+                          <>
+                            <div
+                              data-map-control
+                              role="presentation"
+                              title="Drag to turn (Shift: 15° steps)"
+                              onPointerDown={(e) => beginRotate(e, "table", t.id, renderPos.cx, renderPos.cy, tRot, (d) => setTableRotation(t.id, d))}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onTouchStart={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute z-10 flex items-center justify-center"
+                              style={{
+                                left: renderPos.cx + rotateHandleOffset.dx,
+                                top: renderPos.cy + rotateHandleOffset.dy,
+                                width: 36,
+                                height: 36,
+                                transform: `translate(-50%, -50%) scale(${1 / map.view.scale})`,
+                                cursor: "grab",
+                                touchAction: "none",
+                              }}
+                            >
+                              <span
+                                className="flex items-center justify-center rounded-full"
+                                style={{ width: 22, height: 22, backgroundColor: "#fff", border: `2px solid ${C.gold}`, color: C.gold, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
+                              >
+                                <RotateCw size={12} />
+                              </span>
+                            </div>
+                            {isRotatingThis && (
+                              <div
+                                className="absolute z-20 whitespace-nowrap rounded-md px-2 py-1 text-xs font-semibold pointer-events-none"
+                                style={{
+                                  left: renderPos.cx,
+                                  top: renderPos.cy,
+                                  transform: `translate(-50%, -50%) scale(${1 / map.view.scale})`,
+                                  backgroundColor: C.ink,
+                                  color: "#fff",
+                                }}
+                              >
+                                {tRot}°
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {selectedTableId === t.id && !readOnly && dragTable?.id !== t.id && !isRotatingThis && (() => {
                           const seatedHere = occupiedCountByTable[t.id] || 0;
                           const group = tableGroups.find((g) => g.id === t.groupId);
                           const sharedSize = Number(group?.count) > 1;
@@ -5222,7 +5450,7 @@ export default function SeatingPlanner({
                               className="absolute z-10 flex flex-col items-center gap-1"
                               style={{
                                 left: renderPos.cx,
-                                top: renderPos.cy - renderPos.seatR - 6,
+                                top: renderPos.cy - coverHH - 30,
                                 // Constant on-screen size whatever the zoom level.
                                 transform: `translate(-50%, -100%) scale(${1 / map.view.scale})`,
                                 transformOrigin: "50% 100%",
@@ -5230,7 +5458,10 @@ export default function SeatingPlanner({
                               onMouseDown={(e) => e.stopPropagation()}
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <div className="flex items-center gap-1 rounded-full p-1 shadow-md" style={{ backgroundColor: C.ink }}>
+                              <div
+                                className="flex flex-wrap justify-center items-center gap-1 rounded-3xl p-1 shadow-md"
+                                style={{ backgroundColor: C.ink, width: "max-content", maxWidth: 320 }}
+                              >
                                 <MapMenuButton
                                   icon={<Pencil size={13} />}
                                   label="Rename"
@@ -5242,6 +5473,14 @@ export default function SeatingPlanner({
                                 />
                                 <MapMenuButton icon={<Minus size={13} />} label="Smaller" hideLabel onClick={() => changeSize(-0.15)} />
                                 <MapMenuButton icon={<Plus size={13} />} label="Bigger" hideLabel onClick={() => changeSize(0.15)} />
+                                {canTurn && (
+                                  <MapMenuButton
+                                    icon={<RotateCw size={13} />}
+                                    label={t.shape === "square" ? "Turn 45°" : "Turn 90°"}
+                                    hideLabel
+                                    onClick={() => setTableRotation(t.id, tRot + (t.shape === "square" ? 45 : 90))}
+                                  />
+                                )}
                                 <MapMenuButton
                                   icon={<Move size={13} />}
                                   label="Move"
@@ -5267,7 +5506,8 @@ export default function SeatingPlanner({
                         })()}
                         {Array.from({ length: t.capacity }).map((_, i) => {
                           const seatId = `${t.id}#${i}`;
-                          const { dx, dy } = seatOffset(t.shape, renderPos.w, renderPos.h, i, t.capacity, 34, t.headCount, t.footCount);
+                          const o = seatOffset(t.shape, renderPos.w, renderPos.h, i, t.capacity, 34, t.headCount, t.footCount);
+                          const { dx, dy } = rotateOffset(o.dx, o.dy, tRot);
                           const x = renderPos.cx + dx;
                           const y = renderPos.cy + dy;
                           const guestId = seatAssignment[seatId];
@@ -5904,10 +6144,8 @@ function FixtureSizeEditor({
       data-map-control
       className="absolute z-20 rounded-xl border p-3 shadow-lg flex flex-col gap-2"
       style={{
-        left: "50%",
-        top: "100%",
-        // Clear of the bottom resize handles (16px on screen below the edge).
-        marginTop: 24 / zoom,
+        left: 0,
+        top: 0,
         transform: `translateX(-50%) scale(${1 / zoom})`,
         transformOrigin: "50% 0",
         backgroundColor: "#fff",

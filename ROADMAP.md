@@ -132,6 +132,8 @@ Make room on resize (2026-10-12): general rule, whenever anything on the floor p
 
 PowerPoint-style fixture sizing (2026-10-12): tap a dance floor, bar or stage to get eight handles; drag a side to change one dimension, a corner for both (Shift keeps proportions); the opposite side stays put and the live size shows in metres. The menu's size button (e.g. "4.8 × 4 m") opens Width/Length fields for exact venue measurements, plus "Auto (fits guest count)" / "Reset to standard size". Fixtures now store an exact `wM`/`hM` in metres once sized by hand (legacy `sizeScale` still read); Bigger/Smaller scale both sides by 15%. Growing a fixture triggers the make-room rule as usual.
 
+Turning objects (2026-10-12): dance floor, bar, stage and non-round tables can be rotated. Selecting one shows a round rotate handle below it (drag to turn; snaps to 45° within 4°, Shift = 15° steps; live angle readout), plus a "Turn 90°" button in the menu ("Turn 45°" for square tables) as the no-drag option. Fixtures store `rot`; tables store `tableRotations[tableId]` in the event data. Table bodies rotate with CSS while seat positions are rotated mathematically (`rotateOffset`), so name tags stay upright; the table name counter-rotates. Fixture resize handles work in the fixture's own turned frame. Conflict lines, guest-search highlights and make-room collision boxes (rotated bounding boxes) all account for rotation, and turning something into its neighbours triggers make-room like a resize. Round tables have no turn control (nothing would change).
+
 ## Planned: next up (queued 2026-09-28)
 
 Three items Esther flagged to work through after the constraints-on-guest-row change above:
