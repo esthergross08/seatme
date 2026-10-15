@@ -41,7 +41,7 @@ import InviteForm from "./InviteForm";
 import AgentChat from "./AgentChat";
 import DecorPanel from "./DecorPanel";
 import { useMapViewport } from "./useMapViewport";
-import type { AgentOperation, AgentApplyResult } from "@/lib/agentOperations";
+import type { AgentOperation, AgentOperationType, AgentApplyResult } from "@/lib/agentOperations";
 import {
   getPosterLayout,
   getPosterPalette,
@@ -672,7 +672,11 @@ interface FlatViolation extends FlatPair {
 function expandConstraint(c: Constraint, guestsByGroupId: Record<string, string[]>): FlatPair[] {
   const sideIds = (type: "guest" | "group", id: string) =>
     type === "group" ? guestsByGroupId[id] || [] : id ? [id] : [];
-  const mode: "table" | "adjacent" = c.aType === "group" || c.bType === "group" ? "table" : "adjacent";
+  // "must" between two individual guests means side by side; anything involving
+  // a group, and every "cannot", is judged at the table level ("not at the same
+  // table"), which is what people mean when they say two guests can't sit together.
+  const mode: "table" | "adjacent" =
+    c.type === "cannot" || c.aType === "group" || c.bType === "group" ? "table" : "adjacent";
   const asIds = sideIds(c.aType, c.aId);
   const bsIds = sideIds(c.bType, c.bId);
   const pairs: FlatPair[] = [];
@@ -2806,7 +2810,19 @@ export default function SeatingPlanner({
 
     const results: AgentApplyResult[] = [];
 
-    operations.forEach((op, index) => {
+    // A new or removed rule only takes effect when the solver runs again. The
+    // assistant doesn't always ask for that, so if it changed a rule on a plan
+    // that already has people seated, re-run the solver at the end of the batch.
+    // (Appended last, so result indices still line up with the checklist shown.)
+    const RULE_OPS: AgentOperationType[] = ["add_constraint", "remove_constraint", "set_group_seating_mode"];
+    const opsToApply: AgentOperation[] =
+      operations.some((op) => RULE_OPS.includes(op.type)) &&
+      !operations.some((op) => op.type === "regenerate_plan" || op.type === "clear_seating") &&
+      Object.keys(seatAssignment).length > 0
+        ? [...operations, { type: "regenerate_plan" }]
+        : operations;
+
+    opsToApply.forEach((op, index) => {
       try {
         switch (op.type) {
           case "add_guest": {
@@ -3072,7 +3088,7 @@ export default function SeatingPlanner({
     // (see admin report). Never let this affect the apply itself.
     if (successCount > 0) {
       const successTypes = Array.from(
-        new Set(results.filter((r) => r.ok).map((r) => operations[r.index]?.type).filter(Boolean))
+        new Set(results.filter((r) => r.ok).map((r) => opsToApply[r.index]?.type).filter(Boolean))
       );
       const supabase = createClient();
       supabase.auth
