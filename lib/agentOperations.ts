@@ -71,7 +71,7 @@ export interface AgentOperation {
   aName?: string;
   bType?: "guest" | "group";
   bName?: string;
-  constraintType?: "must" | "cannot";
+  constraintType?: "must" | "cannot" | "notNextTo";
 }
 
 export interface AgentApplyResult {
@@ -125,7 +125,9 @@ export function describeOperation(op: AgentOperation): string {
     case "swap_guests":
       return `Swap seats of "${op.guestNameA ?? "?"}" and "${op.guestNameB ?? "?"}"`;
     case "add_constraint":
-      return `${op.constraintType === "cannot" ? "Keep apart" : "Seat together"}: "${op.aName ?? "?"}" and "${op.bName ?? "?"}"`;
+      return `${
+        op.constraintType === "cannot" ? "Different tables" : op.constraintType === "notNextTo" ? "Not side by side" : "Seat together"
+      }: "${op.aName ?? "?"}" and "${op.bName ?? "?"}"`;
     case "remove_constraint":
       return `Remove constraint between "${op.aName ?? "?"}" and "${op.bName ?? "?"}"`;
     case "regenerate_plan":

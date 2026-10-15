@@ -29,7 +29,7 @@ interface ConstraintIn {
   aId: string;
   bType: "guest" | "group";
   bId: string;
-  type: "must" | "cannot";
+  type: "must" | "cannot" | "notNextTo";
 }
 type SeatAssignmentIn = Record<string, string>;
 
@@ -106,7 +106,7 @@ function buildContext(state: EventState): string {
 
   const nameOf = (type: "guest" | "group", id: string) => (type === "group" ? groupById[id] : guestById[id]) || "?";
   const constraintLines = (state.constraints || []).map(
-    (c) => `- ${nameOf(c.aType, c.aId)} ${c.type === "must" ? "must sit with" : "cannot sit with"} ${nameOf(c.bType, c.bId)}`
+    (c) => `- ${nameOf(c.aType, c.aId)} ${c.type === "must" ? "must sit with" : c.type === "notNextTo" ? "cannot sit next to" : "cannot sit at the same table as"} ${nameOf(c.bType, c.bId)}`
   );
 
   const groupLines = (state.groups || []).map(
@@ -150,7 +150,7 @@ Guidelines:
 - Use set_guest_note for dietary needs, accessibility notes, or any other free-text comment/annotation on a guest ("add a note that X is allergic to nuts", "comment that Y needs a high chair"). Use set_guest_rsvp_status to mark a guest attending/pending/declined — declining automatically frees their seat. Use set_guest_meal_choice for entree/menu selections. Each guest's current note/RSVP/meal (if any) is shown in the state above.
 - Never invent guest, group, or table names that weren't mentioned by the user or shown in the current state, except for genuinely new entities the user is explicitly asking you to create.
 - Keep your text reply short — one or two sentences. The operations list itself will be shown to the user as a detailed, reviewable checklist, so don't repeat every detail in prose.
-- Constraints are between two "sides", each either a specific guest or a whole group; "must" means seated at the same table (adjacent if both individual guests), "cannot" means must not be.`;
+- Constraints are between two "sides", each either a specific guest or a whole group; "must" means seated together (side by side if both are individual guests, same table if a group is involved); "cannot" means not at the same table; "notNextTo" means they may share a table but must never sit side by side. When the user says two people "can't sit together", use "cannot"; use "notNextTo" only when they say not next to / not side by side, or that sharing a table is fine.`;
 
 const TOOL = {
   name: "propose_changes",
@@ -203,7 +203,7 @@ const TOOL = {
             aName: { type: "string", description: "Name of the first side, for add_constraint or remove_constraint" },
             bType: { type: "string", enum: ["guest", "group"], description: "Type of the second side, for add_constraint" },
             bName: { type: "string", description: "Name of the second side, for add_constraint or remove_constraint" },
-            constraintType: { type: "string", enum: ["must", "cannot"], description: "For add_constraint" },
+            constraintType: { type: "string", enum: ["must", "cannot", "notNextTo"], description: "For add_constraint: must = together, cannot = different tables, notNextTo = same table allowed but never side by side" },
           },
           required: ["type"],
         },

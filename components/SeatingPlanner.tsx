@@ -218,8 +218,12 @@ interface Constraint {
   aId: string;
   bType: "guest" | "group";
   bId: string;
-  type: "must" | "cannot";
+  type: RuleType;
 }
+// "must" = sit together (side by side for two guests, same table for groups);
+// "cannot" = not at the same table; "notNextTo" = may share a table, never side by side.
+type RuleType = "must" | "cannot" | "notNextTo";
+const RULE_SHORT: Record<RuleType, string> = { must: "with", cannot: "not with", notNextTo: "not next to" };
 type SeatAssignment = Record<string, string>;
 type FillMode = "consolidate" | "spread";
 type Role = "owner" | "editor" | "viewer";
@@ -672,17 +676,22 @@ interface FlatViolation extends FlatPair {
 function expandConstraint(c: Constraint, guestsByGroupId: Record<string, string[]>): FlatPair[] {
   const sideIds = (type: "guest" | "group", id: string) =>
     type === "group" ? guestsByGroupId[id] || [] : id ? [id] : [];
-  // "must" between two individual guests means side by side; anything involving
-  // a group, and every "cannot", is judged at the table level ("not at the same
-  // table"), which is what people mean when they say two guests can't sit together.
+  // "must" between two individual guests means side by side (same table when a
+  // group is involved); "cannot" always means not at the same table; "notNextTo"
+  // allows the same table but never side by side.
   const mode: "table" | "adjacent" =
-    c.type === "cannot" || c.aType === "group" || c.bType === "group" ? "table" : "adjacent";
+    c.type === "notNextTo"
+      ? "adjacent"
+      : c.type === "cannot" || c.aType === "group" || c.bType === "group"
+        ? "table"
+        : "adjacent";
+  const type: "must" | "cannot" = c.type === "must" ? "must" : "cannot";
   const asIds = sideIds(c.aType, c.aId);
   const bsIds = sideIds(c.bType, c.bId);
   const pairs: FlatPair[] = [];
   asIds.forEach((a) => {
     bsIds.forEach((b) => {
-      if (a !== b) pairs.push({ parentId: c.id, aId: a, bId: b, type: c.type, mode });
+      if (a !== b) pairs.push({ parentId: c.id, aId: a, bId: b, type, mode });
     });
   });
   return pairs;
@@ -1224,14 +1233,14 @@ export default function SeatingPlanner({
   const [compactGuestRows, setCompactGuestRows] = useState(false);
   // Inline "add rule" popover state — only one open at a time, keyed by guest id.
   const [addRuleForGuestId, setAddRuleForGuestId] = useState<string | null>(null);
-  const [addRuleType, setAddRuleType] = useState<"must" | "cannot">("must");
+  const [addRuleType, setAddRuleType] = useState<RuleType>("must");
   const [addRuleTargetType, setAddRuleTargetType] = useState<"guest" | "group">("guest");
   const [addRuleTargetId, setAddRuleTargetId] = useState("");
   // Group-vs-group rules (neither side is a specific person) have their own
   // small add-form near group management, since they don't belong to any one
   // guest's row.
   const [showGroupRuleForm, setShowGroupRuleForm] = useState(false);
-  const [groupRuleType, setGroupRuleType] = useState<"must" | "cannot">("must");
+  const [groupRuleType, setGroupRuleType] = useState<RuleType>("must");
   const [groupRuleAId, setGroupRuleAId] = useState("");
   const [groupRuleBId, setGroupRuleBId] = useState("");
   const [rsvpFilter, setRsvpFilter] = useState<"all" | "attending" | "pending" | "declined">("all");
@@ -1828,8 +1837,8 @@ export default function SeatingPlanner({
   // below, so each guest's row can surface their own rules directly (a group
   // rule fans out to every member) without needing a separate lookup.
   const constraintTagsByGuestId = useMemo(() => {
-    const map: Record<string, { constraintId: string; type: "must" | "cannot"; label: string }[]> = {};
-    const addTag = (guestId: string, constraintId: string, type: "must" | "cannot", label: string) => {
+    const map: Record<string, { constraintId: string; type: RuleType; label: string }[]> = {};
+    const addTag = (guestId: string, constraintId: string, type: RuleType, label: string) => {
       (map[guestId] ??= []).push({ constraintId, type, label });
     };
     for (const c of constraints) {
@@ -2484,11 +2493,11 @@ export default function SeatingPlanner({
   // ---- constraint handlers ----
   // Rules are added directly from a guest's row (their side is always "this
   // guest"); the other side can still be a whole group, same as before.
-  const addConstraintFor = (guestId: string, type: "must" | "cannot", bType: "guest" | "group", bId: string) => {
+  const addConstraintFor = (guestId: string, type: RuleType, bType: "guest" | "group", bId: string) => {
     if (readOnly || !bId) return;
     setConstraints((c) => [...c, { id: genId(), aType: "guest", aId: guestId, bType, bId, type }]);
   };
-  const addGroupConstraint = (aId: string, bId: string, type: "must" | "cannot") => {
+  const addGroupConstraint = (aId: string, bId: string, type: RuleType) => {
     if (readOnly || !aId || !bId || aId === bId) return;
     setConstraints((c) => [...c, { id: genId(), aType: "group", aId, bType: "group", bId, type }]);
   };
@@ -3003,7 +3012,7 @@ export default function SeatingPlanner({
                 aId: aEntity.id,
                 bType,
                 bId: bEntity.id,
-                type: op.constraintType === "cannot" ? "cannot" : "must",
+                type: op.constraintType === "cannot" || op.constraintType === "notNextTo" ? op.constraintType : "must",
               },
             ];
             break;
@@ -4034,11 +4043,11 @@ export default function SeatingPlanner({
                               color: c.type === "must" ? C.sage : C.wine,
                             }}
                           >
-                            {sideLabel("group", c.aId)} {c.type === "must" ? "with" : "not with"} {sideLabel("group", c.bId)}
+                            {sideLabel("group", c.aId)} {RULE_SHORT[c.type]} {sideLabel("group", c.bId)}
                             {!readOnly && (
                               <button
                                 onClick={() => removeConstraintWithUndo(c.id)}
-                                aria-label={`Remove rule: ${sideLabel("group", c.aId)} ${c.type === "must" ? "with" : "not with"} ${sideLabel("group", c.bId)}`}
+                                aria-label={`Remove rule: ${sideLabel("group", c.aId)} ${RULE_SHORT[c.type]} ${sideLabel("group", c.bId)}`}
                                 className="rounded-full hover:opacity-70"
                               >
                                 <X size={9} />
@@ -4067,7 +4076,7 @@ export default function SeatingPlanner({
                       </select>
                       <select
                         value={groupRuleType}
-                        onChange={(e) => setGroupRuleType(e.target.value as "must" | "cannot")}
+                        onChange={(e) => setGroupRuleType(e.target.value as RuleType)}
                         className="text-[10px] font-semibold rounded-md px-1.5 py-1"
                         style={{
                           color: groupRuleType === "must" ? C.sage : C.wine,
@@ -4075,7 +4084,8 @@ export default function SeatingPlanner({
                         }}
                       >
                         <option value="must">must sit with</option>
-                        <option value="cannot">cannot sit with</option>
+                        <option value="cannot">not at the same table as</option>
+                        <option value="notNextTo">not next to</option>
                       </select>
                       <select
                         value={groupRuleBId}
@@ -4227,11 +4237,11 @@ export default function SeatingPlanner({
                                 color: t.type === "must" ? C.sage : C.wine,
                               }}
                             >
-                              {t.type === "must" ? "with" : "not with"} {t.label}
+                              {RULE_SHORT[t.type]} {t.label}
                               {!readOnly && (
                                 <button
                                   onClick={() => removeConstraintWithUndo(t.constraintId)}
-                                  aria-label={`Remove rule: ${t.type === "must" ? "with" : "not with"} ${t.label}`}
+                                  aria-label={`Remove rule: ${RULE_SHORT[t.type]} ${t.label}`}
                                   className="rounded-full hover:opacity-70"
                                 >
                                   <X size={9} />
@@ -4264,7 +4274,7 @@ export default function SeatingPlanner({
                       >
                         <select
                           value={addRuleType}
-                          onChange={(e) => setAddRuleType(e.target.value as "must" | "cannot")}
+                          onChange={(e) => setAddRuleType(e.target.value as RuleType)}
                           className="text-[10px] font-semibold rounded-md px-1.5 py-1"
                           style={{
                             color: addRuleType === "must" ? C.sage : C.wine,
@@ -4272,7 +4282,8 @@ export default function SeatingPlanner({
                           }}
                         >
                           <option value="must">must sit with</option>
-                          <option value="cannot">cannot sit with</option>
+                          <option value="cannot">not at the same table as</option>
+                          <option value="notNextTo">not next to</option>
                         </select>
                         <select
                           value={addRuleTargetType}
