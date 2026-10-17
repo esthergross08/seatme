@@ -474,6 +474,23 @@ function minSeatSpacing(shape: TableShape, w: number, h: number, n: number, pad:
   return min;
 }
 
+// Name tags on the map are 68×30 room-px boxes centred on each seat. On a round
+// or oval table with many seats, the seat ring is too tight for them to sit side
+// by side, so they used to flip to tall upright tags that spilled into each other
+// and into neighbouring tables. Instead, grow the table until every pair of
+// horizontal tags clears (with a little margin), keeping names readable.
+const TAG_W = 68;
+const TAG_H = 30;
+function ringTagsFit(shape: TableShape, w: number, h: number, n: number) {
+  const pts = Array.from({ length: n }, (_, i) => seatOffset(shape, w, h, i, n, 34));
+  for (let a = 0; a < n; a++) {
+    for (let b = a + 1; b < n; b++) {
+      if (Math.abs(pts[a].dx - pts[b].dx) < TAG_W + 4 && Math.abs(pts[a].dy - pts[b].dy) < TAG_H + 4) return false;
+    }
+  }
+  return true;
+}
+
 // ---- Rotation helpers ----
 const normDeg = (d: number) => ((Math.round(d) % 360) + 360) % 360;
 // Rotate an offset (dx, dy) clockwise by `deg`.
@@ -601,15 +618,24 @@ function computeLayout(
     const dims: Record<string, { r: number; w: number; h: number; seatR: number }> = {};
     let maxSeatR = 0;
     tables.forEach((t) => {
-      const r = Math.min(58, 34 + t.capacity * 3.2) * scale * t.sizeScale;
-      const { w, h } = shapeDims(t.shape, r, minTableTextWidth(t.label));
+      let r = Math.min(58, 34 + t.capacity * 3.2) * scale * t.sizeScale;
+      let { w, h } = shapeDims(t.shape, r, minTableTextWidth(t.label));
+      if (t.shape === "round" || t.shape === "oval") {
+        for (let guard = 0; guard < 60 && !ringTagsFit(t.shape, w, h, t.capacity); guard++) {
+          r += 4;
+          ({ w, h } = shapeDims(t.shape, r, minTableTextWidth(t.label)));
+        }
+      }
       const seatR = Math.max(w, h) / 2 + 34;
       dims[t.id] = { r, w, h, seatR };
       if (!positionOverrides[t.id]) maxSeatR = Math.max(maxSeatR, seatR);
     });
 
     const cols = Math.max(1, Math.ceil(Math.sqrt(autoTables.length || 1)));
-    const cell = Math.max(250, maxSeatR * 2 + 40);
+    // seatR is the seat ring; name tags reach up to ~50px past it (upright tags on
+    // crowded square/rectangle sides), so leave that much on each side plus a gap,
+    // otherwise neighbouring tables' tags run into each other.
+    const cell = Math.max(250, (maxSeatR + 52) * 2 + 24);
     const positions: Record<string, { cx: number; cy: number; r: number; w: number; h: number; seatR: number }> = {};
     let autoIdx = 0;
     let maxX = cell;
@@ -2332,15 +2358,29 @@ export default function SeatingPlanner({
     if (!file) return;
     setImportError(null);
     setImportSuccess(null);
-    const isCsv = /\.csv$/i.test(file.name);
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        if (isCsv) {
-          const result = Papa.parse(String(evt.target?.result), { skipEmptyLines: true });
+        const bytes = new Uint8Array(evt.target?.result as ArrayBuffer);
+        // Decide CSV vs. spreadsheet from the file's contents, not just its name:
+        // phones and messaging apps often drop or change the ".csv" extension, and a
+        // CSV sent down the spreadsheet path gets its accents mangled ("Inès" → "InÃ¨s").
+        // Real .xlsx files are zip archives ("PK"), old .xls files start with D0 CF 11 E0.
+        const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+        const isOle = bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0;
+        if (!isZip && !isOle) {
+          // UTF-8 first (what Google Sheets, Numbers and most apps export); if the bytes
+          // aren't valid UTF-8, it's an older Excel-on-Windows export, so fall back to that.
+          let text: string;
+          try {
+            text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          } catch {
+            text = new TextDecoder("windows-1252").decode(bytes);
+          }
+          const result = Papa.parse(text.replace(/^\uFEFF/, ""), { skipEmptyLines: true });
           finishParse(result.data as unknown[][]);
         } else {
-          const wb = XLSX.read(new Uint8Array(evt.target?.result as ArrayBuffer), { type: "array" });
+          const wb = XLSX.read(bytes, { type: "array" });
           const sheet = wb.Sheets[wb.SheetNames[0]];
           const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
           finishParse(raw);
@@ -2349,8 +2389,7 @@ export default function SeatingPlanner({
         setImportError("Couldn't read that file. Make sure it's a .xlsx, .xls, or .csv file.");
       }
     };
-    if (isCsv) reader.readAsText(file);
-    else reader.readAsArrayBuffer(file);
+    reader.readAsArrayBuffer(file);
     e.target.value = "";
   }
 
