@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Wand2, FileImage, ExternalLink, ShoppingBag } from "lucide-react";
 import { POSTER_LAYOUTS, POSTER_PALETTES, POSTER_FONTS } from "@/lib/posterTemplates";
-import { getEtsyRecommendations, buildEtsyAffiliateUrl, etsySearchUrl } from "@/lib/etsyRecommendations";
+import { getEtsyRecommendations, buildEtsyAffiliateUrl, etsySearchUrl, type EtsyCategory } from "@/lib/etsyRecommendations";
 
 const C = {
   ink: "#221F2B",
@@ -30,6 +30,12 @@ interface Pin {
   imageUrl: string | null;
   title?: string;
   description?: string;
+}
+
+interface BoardEtsyFinds {
+  boardId: string;
+  summary: string;
+  categories: EtsyCategory[];
 }
 
 export interface DecorPanelProps {
@@ -73,6 +79,64 @@ export default function DecorPanel({
   const [banner, setBanner] = useState<string | null>(null);
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchReason, setMatchReason] = useState<string | null>(null);
+  const [etsyFinds, setEtsyFinds] = useState<BoardEtsyFinds | null>(null);
+  const [etsyLoading, setEtsyLoading] = useState(false);
+  const [etsyError, setEtsyError] = useState<string | null>(null);
+
+  // A fingerprint of the board's current pins, so the Etsy finds refresh when
+  // pins are added or removed — not just when a different board is picked.
+  const pinSignature = useMemo(
+    () => pins.map((p) => p.id).sort().join(","),
+    [pins],
+  );
+  const boardActive = connected && !!selectedBoardId && pins.length > 0;
+  const usingBoardFinds = boardActive && !!etsyFinds && etsyFinds.boardId === selectedBoardId;
+  const etsyCategories = usingBoardFinds ? etsyFinds!.categories : getEtsyRecommendations(posterPalette);
+
+  function etsyCacheKey(boardId: string) {
+    return `seatme:etsy-finds:${eventId}:${boardId}`;
+  }
+
+  async function loadEtsyFinds(force = false) {
+    if (!selectedBoardId) return;
+    const boardId = selectedBoardId;
+    const signature = pinSignature;
+    if (!force) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(etsyCacheKey(boardId)) || "null");
+        if (cached && cached.signature === signature && Array.isArray(cached.categories)) {
+          setEtsyFinds({ boardId, summary: cached.summary || "", categories: cached.categories });
+          setEtsyError(null);
+          return;
+        }
+      } catch {
+        // storage unavailable or corrupt — just fetch fresh
+      }
+    }
+    setEtsyLoading(true);
+    setEtsyError(null);
+    try {
+      const res = await fetch("/api/pinterest/etsy-finds", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Couldn't match Etsy finds to your board.");
+      if (data.boardId && data.boardId !== boardId) return; // board changed mid-request
+      const finds: BoardEtsyFinds = { boardId, summary: data.summary || "", categories: data.categories || [] };
+      setEtsyFinds(finds);
+      try {
+        localStorage.setItem(etsyCacheKey(boardId), JSON.stringify({ signature, summary: finds.summary, categories: finds.categories }));
+      } catch {
+        // ignore storage failures
+      }
+    } catch (e) {
+      setEtsyError(e instanceof Error ? e.message : "Couldn't match Etsy finds to your board.");
+    } finally {
+      setEtsyLoading(false);
+    }
+  }
 
   async function loadBoards() {
     setLoading(true);
@@ -131,6 +195,18 @@ export default function DecorPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, selectedBoardId]);
 
+  // Re-match the Etsy finds whenever the selected board or its pins change.
+  useEffect(() => {
+    if (!connected || !selectedBoardId) {
+      setEtsyFinds(null);
+      setEtsyError(null);
+      return;
+    }
+    if (pinsLoading || pins.length === 0) return;
+    loadEtsyFinds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, selectedBoardId, pinSignature, pinsLoading]);
+
   useEffect(() => {
     if (!banner) return;
     const t = setTimeout(() => setBanner(null), 5000);
@@ -147,6 +223,7 @@ export default function DecorPanel({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't save that board.");
+      setPins([]);
       setSelectedBoardId(board.id);
       setSelectedBoardName(board.name);
       setSuggestion(null);
@@ -390,36 +467,6 @@ export default function DecorPanel({
         )}
       </div>
 
-      <div className="mb-6 p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
-        <div className="flex items-center gap-2 mb-1">
-          <ShoppingBag size={16} style={{ color: C.gold }} />
-          <p className="text-sm font-medium" style={{ color: C.ink }}>
-            Etsy decor finds
-          </p>
-        </div>
-        <p className="text-xs mb-4" style={{ color: C.muted }}>
-          Matched to your {POSTER_PALETTES.find((p) => p.id === posterPalette)?.label ?? "chosen"} palette above. Opens Etsy search results in a new tab.
-        </p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {getEtsyRecommendations(posterPalette).map((cat) => (
-            <a
-              key={cat.label}
-              href={buildEtsyAffiliateUrl(etsySearchUrl(cat.query))}
-              target="_blank"
-              rel="noopener sponsored"
-              className="flex items-center justify-between gap-1.5 text-xs font-medium px-3 py-2.5 rounded-lg border"
-              style={{ borderColor: C.line, color: C.ink }}
-            >
-              {cat.label}
-              <ExternalLink size={12} style={{ color: C.muted }} className="shrink-0" />
-            </a>
-          ))}
-        </div>
-        <p className="text-[10px] mt-3" style={{ color: C.muted }}>
-          These are Etsy affiliate links — SeatMe may earn a small commission on purchases, at no extra cost to you.
-        </p>
-      </div>
-
       {!connected && (
         <div className="p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
           <p className="text-sm mb-3" style={{ color: C.ink }}>
@@ -576,10 +623,78 @@ export default function DecorPanel({
       )}
 
       {connected && (
-        <button onClick={loadBoards} className="mt-4 flex items-center gap-1.5 text-xs" style={{ color: C.muted }}>
+        <button
+          onClick={() => {
+            loadBoards();
+            if (selectedBoardId) loadPins();
+          }}
+          className="mt-4 flex items-center gap-1.5 text-xs"
+          style={{ color: C.muted }}
+        >
           <RefreshCw size={12} /> Refresh
         </button>
       )}
+
+      <div className="mt-6 p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <div className="flex items-center gap-2">
+            <ShoppingBag size={16} style={{ color: C.gold }} />
+            <p className="text-sm font-medium" style={{ color: C.ink }}>
+              Etsy decor finds
+            </p>
+          </div>
+          {usingBoardFinds && (
+            <button
+              onClick={() => loadEtsyFinds(true)}
+              disabled={etsyLoading}
+              className="flex items-center gap-1 text-xs disabled:opacity-40 shrink-0"
+              style={{ color: C.muted }}
+            >
+              <RefreshCw size={12} className={etsyLoading ? "animate-spin" : ""} /> Refresh
+            </button>
+          )}
+        </div>
+        <p className="text-xs mb-4" style={{ color: C.muted }}>
+          {usingBoardFinds
+            ? `Matched to your “${selectedBoardName ?? "Pinterest"}” board${etsyFinds?.summary ? ` — ${etsyFinds.summary}` : "."}`
+            : boardActive && etsyLoading
+              ? `Matching finds to your “${selectedBoardName ?? "Pinterest"}” board…`
+              : `Matched to your ${POSTER_PALETTES.find((p) => p.id === posterPalette)?.label ?? "chosen"} palette above${
+                  connected ? "" : " — connect a Pinterest board to match them to your inspiration instead"
+                }.`}{" "}
+          Opens Etsy search results in a new tab.
+        </p>
+        {etsyError && boardActive && (
+          <p className="text-[11px] mb-3" style={{ color: C.wine }}>
+            {etsyError} Showing palette matches for now.
+          </p>
+        )}
+        {boardActive && etsyLoading && !etsyFinds ? (
+          <div className="flex items-center gap-2 text-xs" style={{ color: C.muted }}>
+            <Loader2 size={13} className="animate-spin" /> Reading your board…
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {etsyCategories.map((cat) => (
+              <a
+                key={cat.label + cat.query}
+                href={buildEtsyAffiliateUrl(etsySearchUrl(cat.query))}
+                target="_blank"
+                rel="noopener sponsored"
+                title={cat.query}
+                className="flex items-center justify-between gap-1.5 text-xs font-medium px-3 py-2.5 rounded-lg border"
+                style={{ borderColor: C.line, color: C.ink }}
+              >
+                {cat.label}
+                <ExternalLink size={12} style={{ color: C.muted }} className="shrink-0" />
+              </a>
+            ))}
+          </div>
+        )}
+        <p className="text-[10px] mt-3" style={{ color: C.muted }}>
+          These are Etsy affiliate links — SeatMe may earn a small commission on purchases, at no extra cost to you.
+        </p>
+      </div>
     </div>
   );
 }
