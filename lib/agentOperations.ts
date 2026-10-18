@@ -65,6 +65,9 @@ export interface AgentOperation {
   count?: number;
   capacity?: number;
   tableLabel?: string;
+  // For seat_guest: which seat at the table. "head"/"foot" only exist on square and
+  // rectangle tables (their short ends); omitted or "any" means any free seat.
+  seatPosition?: "head" | "foot" | "any";
   guestNameA?: string;
   guestNameB?: string;
   aType?: "guest" | "group";
@@ -119,7 +122,9 @@ export function describeOperation(op: AgentOperation): string {
     case "remove_table_group":
       return `Remove table type "${op.tableGroupLabel ?? "?"}"`;
     case "seat_guest":
-      return `Seat "${op.guestName ?? "?"}" at ${op.tableLabel ?? "?"}`;
+      return op.seatPosition === "head" || op.seatPosition === "foot"
+        ? `Seat "${op.guestName ?? "?"}" at the ${op.seatPosition} of ${op.tableLabel ?? "?"}`
+        : `Seat "${op.guestName ?? "?"}" at ${op.tableLabel ?? "?"}`;
     case "unseat_guest":
       return `Unseat "${op.guestName ?? "?"}"`;
     case "swap_guests":

@@ -9,6 +9,9 @@ interface TableGroupIn {
   label: string;
   count: number | "";
   capacity: number | "";
+  shape?: "round" | "oval" | "square" | "rectangle";
+  headCount?: number | "";
+  footCount?: number | "";
 }
 interface GuestIn {
   id: string;
@@ -51,7 +54,14 @@ interface ChatTurn {
 }
 
 function buildTables(tableGroups: TableGroupIn[], nameOverrides: Record<string, string> = {}) {
-  const tables: { id: string; label: string; capacity: number }[] = [];
+  const tables: {
+    id: string;
+    label: string;
+    capacity: number;
+    shape: string;
+    headIdxs: number[];
+    footIdxs: number[];
+  }[] = [];
   (tableGroups || []).forEach((g) => {
     const count = Number(g.count) > 0 ? Number(g.count) : 1;
     const capacity = Number(g.capacity) > 0 ? Number(g.capacity) : 1;
@@ -59,10 +69,19 @@ function buildTables(tableGroups: TableGroupIn[], nameOverrides: Record<string, 
       const id = `${g.id}-${i}`;
       const autoLabel = count > 1 ? `${g.label} ${i + 1}` : g.label;
       const override = nameOverrides[id];
+      const shape = g.shape || "round";
+      const isRect = shape === "square" || shape === "rectangle";
+      // Mirrors rectSeatRoles in SeatingPlanner: head seats first, then the top side, then the foot.
+      const hc = isRect ? Math.min(Number(g.headCount) > 0 ? Number(g.headCount) : 1, capacity) : 0;
+      const fc = isRect ? Math.min(Number(g.footCount) > 0 ? Number(g.footCount) : 1, capacity - hc) : 0;
+      const topCount = Math.ceil((capacity - hc - fc) / 2);
       tables.push({
         id,
         label: override && override.trim().length > 0 ? override : autoLabel,
         capacity,
+        shape,
+        headIdxs: Array.from({ length: hc }, (_, k) => k),
+        footIdxs: Array.from({ length: fc }, (_, k) => hc + topCount + k),
       });
     }
   });
@@ -98,7 +117,23 @@ function buildContext(state: EventState): string {
     return `- ${g.name}${groupNames.length ? ` [${groupNames.join(", ")}]` : ""} — ${seat}${extras.length ? ` (${extras.join("; ")})` : ""}`;
   });
 
-  const tableLines = tables.map((t) => `- ${t.label}: ${seatCountByTable[t.id] || 0}/${t.capacity} seats filled`);
+  const guestNameAt = (tableId: string, idxs: number[]) =>
+    idxs
+      .map((i) => state.seatAssignment?.[`${tableId}#${i}`])
+      .filter(Boolean)
+      .map((gid) => guestById[gid as string] || "?");
+  const tableLines = tables.map((t) => {
+    let line = `- ${t.label} (${t.shape}): ${seatCountByTable[t.id] || 0}/${t.capacity} seats filled`;
+    if (t.headIdxs.length || t.footIdxs.length) {
+      const head = guestNameAt(t.id, t.headIdxs);
+      const foot = guestNameAt(t.id, t.footIdxs);
+      line += `; head (${t.headIdxs.length} seat${t.headIdxs.length === 1 ? "" : "s"}): ${head.join(", ") || "empty"}`;
+      line += `; foot (${t.footIdxs.length} seat${t.footIdxs.length === 1 ? "" : "s"}): ${foot.join(", ") || "empty"}`;
+    } else {
+      line += "; no head/foot (round seating)";
+    }
+    return line;
+  });
 
   const tableGroupLines = (state.tableGroups || []).map(
     (tg) => `- "${tg.label}": ${tg.count || 0} table(s) × ${tg.capacity || 0} seats each`
@@ -148,6 +183,8 @@ Guidelines:
 - Only use add_constraint/set_guest_groups-style pairwise constraints for specific guest-to-guest or guest-to-group requests that aren't just "keep this whole group together" (e.g. "seat Sara next to Tom", "keep the Chen family away from the Diaz family").
 - Adding or removing a constraint only records the rule; it does not move anyone. If any guests are already seated, end the operations list with regenerate_plan so the plan actually reflects the new rule.
 - Use set_guest_note for dietary needs, accessibility notes, or any other free-text comment/annotation on a guest ("add a note that X is allergic to nuts", "comment that Y needs a high chair"). Use set_guest_rsvp_status to mark a guest attending/pending/declined — declining automatically frees their seat. Use set_guest_meal_choice for entree/menu selections. Each guest's current note/RSVP/meal (if any) is shown in the state above.
+- Head / foot of the table: square and rectangle tables have a "head" and a "foot" (their short ends); round and oval tables don't. The tables list above shows each table's shape and who's at its head and foot. When the user asks to put someone at the head (or foot) of a table, use seat_guest with seatPosition "head" (or "foot") and that table's tableLabel. If they don't say which table, use the table the guest is already seated at; if the guest isn't seated, or it's ambiguous, ask. If anyone already sits there, the app swaps them automatically — don't add a separate operation for them. If the table is round or oval, don't call the tool: explain it has no head and offer to change that table type's shape to rectangle.
+- Never put regenerate_plan AFTER a seat_guest/swap_guests in the same list — regenerating reshuffles everyone and would undo the manual placement. If both are needed, regenerate first, then seat.
 - Never invent guest, group, or table names that weren't mentioned by the user or shown in the current state, except for genuinely new entities the user is explicitly asking you to create.
 - Keep your text reply short — one or two sentences. The operations list itself will be shown to the user as a detailed, reviewable checklist, so don't repeat every detail in prose.
 - Constraints are between two "sides", each either a specific guest or a whole group; "must" means seated together (side by side if both are individual guests, same table if a group is involved); "cannot" means not at the same table; "notNextTo" means they may share a table but must never sit side by side. When the user says two people "can't sit together", use "cannot"; use "notNextTo" only when they say not next to / not side by side, or that sharing a table is fine.`;
@@ -197,6 +234,12 @@ const TOOL = {
             count: { type: "number", description: "Number of tables of this type, for add/update_table_group" },
             capacity: { type: "number", description: "Seats per table, for add/update_table_group" },
             tableLabel: { type: "string", description: "Individual table label (e.g. 'Family Round 1'), for seat_guest" },
+            seatPosition: {
+              type: "string",
+              enum: ["head", "foot", "any"],
+              description:
+                "For seat_guest: 'head' or 'foot' places the guest at that short end of a square/rectangle table (whoever was there is swapped out automatically). Omit or 'any' for any free seat.",
+            },
             guestNameA: { type: "string", description: "First guest, for swap_guests" },
             guestNameB: { type: "string", description: "Second guest, for swap_guests" },
             aType: { type: "string", enum: ["guest", "group"], description: "Type of the first side, for add_constraint" },

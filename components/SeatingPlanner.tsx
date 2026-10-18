@@ -2991,13 +2991,53 @@ export default function SeatingPlanner({
               op.tableLabel || ""
             );
             if (!table) throw new Error(`Couldn't find table "${op.tableLabel}".`);
-            const occupied = new Set(Object.keys(workingSeatAssignment));
-            const freeSeat = buildSeats([table]).find((s) => !occupied.has(s.id));
-            if (!freeSeat) throw new Error(`"${table.label}" is full.`);
             const next = { ...workingSeatAssignment };
             const fromSeatId = Object.keys(next).find((sid) => next[sid] === g.id);
+            const position = op.seatPosition === "head" || op.seatPosition === "foot" ? op.seatPosition : null;
+
+            if (!position) {
+              // Already at this table → nothing to move.
+              if (fromSeatId && fromSeatId.split("#")[0] === table.id) break;
+              const occupied = new Set(Object.keys(next));
+              const freeSeat = buildSeats([table]).find((s) => !occupied.has(s.id));
+              if (!freeSeat) throw new Error(`"${table.label}" is full.`);
+              if (fromSeatId) delete next[fromSeatId];
+              next[freeSeat.id] = g.id;
+              workingSeatAssignment = next;
+              break;
+            }
+
+            // Head/foot: only square and rectangle tables have short ends.
+            if (table.shape !== "square" && table.shape !== "rectangle") {
+              throw new Error(`"${table.label}" is ${table.shape} — only square and rectangle tables have a ${position}.`);
+            }
+            const roles = rectSeatRoles(table.capacity, table.headCount, table.footCount);
+            const targetIdxs = position === "head" ? roles.headIdxs : roles.footIdxs;
+            if (targetIdxs.length === 0) throw new Error(`"${table.label}" has no seat at the ${position}.`);
+            const targetSeatIds = targetIdxs.map((i) => `${table.id}#${i}`);
+            if (fromSeatId && targetSeatIds.includes(fromSeatId)) break; // already there
+
+            // Prefer a free head/foot seat; otherwise take the first one and move its occupant.
+            const targetSeatId = targetSeatIds.find((sid) => !next[sid]) ?? targetSeatIds[0];
+            const occupantId = next[targetSeatId];
             if (fromSeatId) delete next[fromSeatId];
-            next[freeSeat.id] = g.id;
+            next[targetSeatId] = g.id;
+            if (occupantId) {
+              if (fromSeatId) {
+                // Straight swap: whoever had the seat takes the guest's old seat.
+                next[fromSeatId] = occupantId;
+              } else {
+                // Guest wasn't seated — bump the occupant to another free seat, same table first.
+                const taken = new Set(Object.keys(next));
+                const allSeats = buildSeats(
+                  buildTables(workingTableGroups, tableNameOverrides).filter((t) => !deletedTableSet.has(t.id))
+                );
+                const spare =
+                  allSeats.find((s) => s.tableId === table.id && !taken.has(s.id)) || allSeats.find((s) => !taken.has(s.id));
+                if (!spare) throw new Error(`No free seat to move ${workingGuests.find((x) => x.id === occupantId)?.name ?? "the current occupant"} to.`);
+                next[spare.id] = occupantId;
+              }
+            }
             workingSeatAssignment = next;
             break;
           }
