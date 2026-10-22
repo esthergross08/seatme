@@ -171,6 +171,7 @@ export default function AgentChat({ eventId, role, getState, onApply }: AgentCha
                           <span>
                             {describeOperation(op)}
                             {result?.ok === false && result.message && <span style={{ color: C.wine }}> — {result.message}</span>}
+                            {result?.ok && result.message && <span style={{ color: C.muted }}> — {result.message}</span>}
                           </span>
                         </div>
                       );

@@ -20,6 +20,8 @@ export type AgentOperationType =
   | "seat_guest"
   | "unseat_guest"
   | "swap_guests"
+  | "move_group_off_table"
+  | "fill_table_from_groups"
   | "add_constraint"
   | "remove_constraint"
   | "regenerate_plan"
@@ -43,6 +45,8 @@ export const AGENT_OPERATION_TYPES: AgentOperationType[] = [
   "seat_guest",
   "unseat_guest",
   "swap_guests",
+  "move_group_off_table",
+  "fill_table_from_groups",
   "add_constraint",
   "remove_constraint",
   "regenerate_plan",
@@ -75,6 +79,8 @@ export interface AgentOperation {
   bType?: "guest" | "group";
   bName?: string;
   constraintType?: "must" | "cannot" | "notNextTo";
+  // For fill_table_from_groups: how many random members to take from each group.
+  picks?: { groupName: string; count: number }[];
 }
 
 export interface AgentApplyResult {
@@ -129,6 +135,12 @@ export function describeOperation(op: AgentOperation): string {
       return `Unseat "${op.guestName ?? "?"}"`;
     case "swap_guests":
       return `Swap seats of "${op.guestNameA ?? "?"}" and "${op.guestNameB ?? "?"}"`;
+    case "move_group_off_table":
+      return `Move everyone from "${op.groupName ?? "?"}" off ${op.tableLabel ?? "?"} to other tables`;
+    case "fill_table_from_groups":
+      return `Fill ${op.tableLabel ?? "?"} with ${
+        (op.picks || []).map((p) => `${p.count} random from "${p.groupName}"`).join(" and ") || "?"
+      }`;
     case "add_constraint":
       return `${
         op.constraintType === "cannot" ? "Different tables" : op.constraintType === "notNextTo" ? "Not side by side" : "Seat together"

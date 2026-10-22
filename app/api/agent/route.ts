@@ -185,6 +185,8 @@ Guidelines:
 - Use set_guest_note for dietary needs, accessibility notes, or any other free-text comment/annotation on a guest ("add a note that X is allergic to nuts", "comment that Y needs a high chair"). Use set_guest_rsvp_status to mark a guest attending/pending/declined — declining automatically frees their seat. Use set_guest_meal_choice for entree/menu selections. Each guest's current note/RSVP/meal (if any) is shown in the state above.
 - Head / foot of the table: square and rectangle tables have a "head" and a "foot" (their short ends); round and oval tables don't. The tables list above shows each table's shape and who's at its head and foot. When the user asks to put someone at the head (or foot) of a table, use seat_guest with seatPosition "head" (or "foot") and that table's tableLabel. If they don't say which table, use the table the guest is already seated at; if the guest isn't seated, or it's ambiguous, ask. If anyone already sits there, the app swaps them automatically — don't add a separate operation for them. If the table is round or oval, don't call the tool: explain it has no head and offer to change that table type's shape to rectangle.
 - Guests you place with seat_guest stay pinned to that table (or to that head/foot seat) for any regenerate_plan later in the same list; the solver may only move them between seats there. So when the user wants someone at a specific table AND a new rule about them (e.g. "keep A and B at the head table but not next to each other"), list seat_guest for each of them first — even if they're already sitting there, since that's what pins them — then add_constraint, then regenerate_plan. swap_guests is not pinned: never put regenerate_plan after a swap_guests, or the swap may be undone.
+- Whole groups and random picks: never list one seat_guest per person to move or fill with a group — that gets long and can fail. Use move_group_off_table (groupName + tableLabel) to send every member of a group who sits at that table to free seats at other tables (the app picks seats, keeping the group together where it can). Use fill_table_from_groups (tableLabel + picks, e.g. [{groupName: "Bride's family", count: 9}]) when the user wants some number of people, random or unspecified, from one or more groups at a table; the app picks who and only uses free seats there. Order them: move people off the table first, then any seat_guest for specific people (e.g. the couple), then fill_table_from_groups — so specific people get their seats first and are never picked at random. Look at how many seats the table has: if what the user asks for won't fit, say so and ask before proposing anything. Like seat_guest, guests placed by these two are kept where they were put by any regenerate_plan later in the same list.
+- Which table: when the user says "the table", "that table" or "this table", use the table named most recently in the conversation. If no table has been named, or it could be more than one, don't guess — ask which table, listing the likely ones by name.
 - Never invent guest, group, or table names that weren't mentioned by the user or shown in the current state, except for genuinely new entities the user is explicitly asking you to create.
 - Keep your text reply short — one or two sentences. The operations list itself will be shown to the user as a detailed, reviewable checklist, so don't repeat every detail in prose.
 - Constraints are between two "sides", each either a specific guest or a whole group; "must" means seated together (side by side if both are individual guests, same table if a group is involved); "cannot" means not at the same table; "notNextTo" means they may share a table but must never sit side by side. When the user says two people "can't sit together", use "cannot"; use "notNextTo" only when they say not next to / not side by side, or that sharing a table is fine.`;
@@ -233,7 +235,22 @@ const TOOL = {
             newTableGroupLabel: { type: "string", description: "New label, for update_table_group" },
             count: { type: "number", description: "Number of tables of this type, for add/update_table_group" },
             capacity: { type: "number", description: "Seats per table, for add/update_table_group" },
-            tableLabel: { type: "string", description: "Individual table label (e.g. 'Family Round 1'), for seat_guest" },
+            tableLabel: {
+              type: "string",
+              description: "Individual table label (e.g. 'Family Round 1'), for seat_guest, move_group_off_table and fill_table_from_groups",
+            },
+            picks: {
+              type: "array",
+              description: "For fill_table_from_groups: how many random guests to take from each group. The app picks the people.",
+              items: {
+                type: "object",
+                properties: {
+                  groupName: { type: "string", description: "Exact name of an existing group" },
+                  count: { type: "number", description: "How many random members of that group to seat" },
+                },
+                required: ["groupName", "count"],
+              },
+            },
             seatPosition: {
               type: "string",
               enum: ["head", "foot", "any"],
@@ -316,7 +333,9 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 2048,
+        // Big requests (moving or filling whole tables) can need long operation
+        // lists; a low cap cut them off mid-list and the whole proposal was lost.
+        max_tokens: 8000,
         system: SYSTEM_PROMPT,
         tools: [TOOL],
         messages,
@@ -340,6 +359,16 @@ export async function POST(request: Request) {
     .map((b) => b.text)
     .join("\n")
     .trim();
+
+  // Ran out of room mid-answer: the operations list is incomplete, so don't
+  // apply any of it, and say what happened rather than asking for details.
+  if (data.stop_reason === "max_tokens") {
+    return NextResponse.json({
+      reply:
+        "That's more changes than I can lay out in one go. Could you split it into smaller steps — for example, first move one group off the table, then fill it?",
+      operations: [],
+    });
+  }
 
   const toolBlock = content.find((b) => b.type === "tool_use");
   const validTypes = new Set(AGENT_OPERATION_TYPES);

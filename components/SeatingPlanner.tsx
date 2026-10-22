@@ -2897,6 +2897,8 @@ export default function SeatingPlanner({
     const pinnedSeatsOfGuest: Record<string, string[]> = {};
 
     opsToApply.forEach((op, index) => {
+      // Optional detail shown under a step that succeeded (e.g. who was picked).
+      let note: string | undefined;
       try {
         switch (op.type) {
           case "add_guest": {
@@ -3069,6 +3071,91 @@ export default function SeatingPlanner({
             workingSeatAssignment = next;
             break;
           }
+          case "move_group_off_table": {
+            const grp = findGroup(op.groupName);
+            if (!grp) throw new Error(`Couldn't find group "${op.groupName}".`);
+            const liveTables = buildTables(workingTableGroups, tableNameOverrides).filter((t) => !deletedTableSet.has(t.id));
+            const table = byName(liveTables, (t) => t.label, op.tableLabel || "");
+            if (!table) throw new Error(`Couldn't find table "${op.tableLabel}".`);
+            const isMember = (gid: string) => !!workingGuests.find((x) => x.id === gid)?.groupIds.includes(grp.id);
+            const next = { ...workingSeatAssignment };
+            const leaving = Object.keys(next).filter((sid) => sid.split("#")[0] === table.id && isMember(next[sid]));
+            if (leaving.length === 0) throw new Error(`Nobody from "${grp.name}" is at ${table.label}.`);
+            // Free seats at other tables, best first: tables where this group already
+            // sits (so it stays together), then the emptiest tables.
+            const occupied = new Set(Object.keys(next));
+            const otherTables = liveTables.filter((t) => t.id !== table.id);
+            const membersAt = (tid: string) => Object.keys(next).filter((sid) => sid.split("#")[0] === tid && isMember(next[sid])).length;
+            const freeAt = (t: Table) => buildSeats([t]).filter((s) => !occupied.has(s.id));
+            const ranked = otherTables
+              .map((t) => ({ t, members: membersAt(t.id), free: freeAt(t) }))
+              .filter((x) => x.free.length > 0)
+              .sort((a, b) => b.members - a.members || b.free.length - a.free.length);
+            const destSeats = ranked.flatMap((x) => x.free);
+            if (destSeats.length < leaving.length) {
+              throw new Error(`Only ${destSeats.length} free seat${destSeats.length === 1 ? "" : "s"} at other tables for ${leaving.length} guests — add a table first.`);
+            }
+            leaving.forEach((sid, k) => {
+              const gid = next[sid];
+              delete next[sid];
+              next[destSeats[k].id] = gid;
+              pinnedSeatsOfGuest[gid] = otherTables.flatMap((t) => buildSeats([t]).map((s) => s.id));
+            });
+            workingSeatAssignment = next;
+            const usedTables = [...new Set(destSeats.slice(0, leaving.length).map((s) => liveTables.find((t) => t.id === s.tableId)?.label))];
+            note = `Moved ${leaving.length} to ${usedTables.join(", ")}`;
+            break;
+          }
+          case "fill_table_from_groups": {
+            const liveTables = buildTables(workingTableGroups, tableNameOverrides).filter((t) => !deletedTableSet.has(t.id));
+            const table = byName(liveTables, (t) => t.label, op.tableLabel || "");
+            if (!table) throw new Error(`Couldn't find table "${op.tableLabel}".`);
+            const picks = (op.picks || []).filter((p) => p && p.groupName && Number(p.count) > 0);
+            if (picks.length === 0) throw new Error("No groups to pick from.");
+            const next = { ...workingSeatAssignment };
+            const tableSeatIds = buildSeats([table]).map((s) => s.id);
+            const freeSeats = tableSeatIds.filter((sid) => !next[sid]);
+            const atTable = new Set(tableSeatIds.map((sid) => next[sid]).filter(Boolean));
+            const wanted = picks.reduce((n, p) => n + Number(p.count), 0);
+            if (freeSeats.length < wanted) {
+              throw new Error(`${table.label} has ${freeSeats.length} free seat${freeSeats.length === 1 ? "" : "s"} but ${wanted} were requested — move someone off it first.`);
+            }
+            const chosen: string[] = [];
+            const summary: string[] = [];
+            for (const p of picks) {
+              const grp = findGroup(p.groupName);
+              if (!grp) throw new Error(`Couldn't find group "${p.groupName}".`);
+              // Random members of this group who aren't already at the table, aren't
+              // declined, and weren't placed somewhere specific earlier in this request.
+              const pool = workingGuests.filter(
+                (x) =>
+                  x.groupIds.includes(grp.id) &&
+                  x.rsvpStatus !== "declined" &&
+                  !atTable.has(x.id) &&
+                  !chosen.includes(x.id) &&
+                  !pinnedSeatsOfGuest[x.id]
+              );
+              for (let i = pool.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [pool[i], pool[j]] = [pool[j], pool[i]];
+              }
+              const take = pool.slice(0, Number(p.count));
+              if (take.length < Number(p.count)) {
+                throw new Error(`"${grp.name}" only has ${take.length} guest${take.length === 1 ? "" : "s"} available for ${table.label}.`);
+              }
+              chosen.push(...take.map((x) => x.id));
+              summary.push(`${grp.name}: ${take.map((x) => x.name).join(", ")}`);
+            }
+            chosen.forEach((gid, k) => {
+              const fromSeatId = Object.keys(next).find((sid) => next[sid] === gid);
+              if (fromSeatId) delete next[fromSeatId];
+              next[freeSeats[k]] = gid;
+              pinnedSeatsOfGuest[gid] = tableSeatIds;
+            });
+            workingSeatAssignment = next;
+            note = summary.join(" · ");
+            break;
+          }
           case "unseat_guest": {
             const g = findGuest(op.guestName);
             if (!g) throw new Error(`Couldn't find guest "${op.guestName}".`);
@@ -3186,7 +3273,7 @@ export default function SeatingPlanner({
           default:
             throw new Error("Unknown operation.");
         }
-        results.push({ index, ok: true });
+        results.push({ index, ok: true, ...(note ? { message: note } : {}) });
       } catch (e) {
         results.push({ index, ok: false, message: e instanceof Error ? e.message : "Failed." });
       }
