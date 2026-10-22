@@ -5446,6 +5446,51 @@ export default function SeatingPlanner({
                       isResizingThis && resizePreviewScale != null ? resizePreviewScale / (t.sizeScale || 1) : 1;
                     const renderPos = liveResizeRatio !== 1 ? { ...pos, w: pos.w * liveResizeRatio, h: pos.h * liveResizeRatio } : pos;
                     const tRot = tableRot(t.id);
+                    // Which seats get a narrow rotated name tag instead of the normal
+                    // upright one. Only on crowded tables, and only for tags that would
+                    // really touch another one: each seat first gets the tag its edge
+                    // calls for (rotated on a top/bottom edge, after the table is
+                    // turned), then any rotated tag goes back upright if an upright tag
+                    // there wouldn't touch a neighbour. That keeps the head and foot of a
+                    // turned rectangle readable when only its long sides are packed.
+                    const tallTagOfSeat: boolean[] = (() => {
+                      const n = t.capacity;
+                      if (!tagsCrowded) return new Array(n).fill(false);
+                      const centers = Array.from({ length: n }, (_, i) => {
+                        const o = seatOffset(t.shape, renderPos.w, renderPos.h, i, n, 34, t.headCount, t.footCount);
+                        return { o, ...rotateOffset(o.dx, o.dy, tRot) };
+                      });
+                      const tall = centers.map(({ o }, i) => {
+                        let nx: number;
+                        let ny: number;
+                        if (seatRoles) {
+                          if (seatRoles.headIdxs.includes(i)) [nx, ny] = [-1, 0];
+                          else if (seatRoles.footIdxs.includes(i)) [nx, ny] = [1, 0];
+                          else if (seatRoles.sideTopIdxs.includes(i)) [nx, ny] = [0, -1];
+                          else [nx, ny] = [0, 1];
+                        } else {
+                          // Outward normal of the elliptical seat ring.
+                          const rw = renderPos.w / 2 + 34;
+                          const rh = renderPos.h / 2 + 34;
+                          nx = o.dx / (rw * rw);
+                          ny = o.dy / (rh * rh);
+                        }
+                        const facing = rotateOffset(nx, ny, tRot);
+                        return Math.abs(facing.dy) >= Math.abs(facing.dx);
+                      });
+                      const W = { w: 68, h: 30 };
+                      const T = { w: 22, h: 100 };
+                      const touches = (i: number, j: number, bi: { w: number; h: number }, bj: { w: number; h: number }) =>
+                        Math.abs(centers[i].dx - centers[j].dx) < (bi.w + bj.w) / 2 + 2 &&
+                        Math.abs(centers[i].dy - centers[j].dy) < (bi.h + bj.h) / 2 + 2;
+                      return tall.map((isTall, i) => {
+                        if (!isTall) return false;
+                        for (let j = 0; j < n; j++) {
+                          if (j !== i && touches(i, j, W, tall[j] ? T : W)) return true;
+                        }
+                        return false;
+                      });
+                    })();
                     const isRotatingThis = rotating?.kind === "table" && rotating.id === t.id;
                     const canTurn = t.shape !== "round";
                     // Half-height of what the turned table (with its seats) covers — menu sits above it.
@@ -5694,27 +5739,7 @@ export default function SeatingPlanner({
                               : seatRoles && seatRoles.footIdxs.includes(i)
                               ? "Foot"
                               : null;
-                          // Crowded tables switch to narrow upright tags, which only fit side by
-                          // side along a horizontal edge. Pick each seat's tag direction from
-                          // the way its edge faces *after* the table is turned: seats on a
-                          // top/bottom edge get tall tags, seats on a left/right edge keep the
-                          // normal wide ones (stacked down the side, each readable).
-                          let nx: number;
-                          let ny: number;
-                          if (seatRoles) {
-                            if (seatRoles.headIdxs.includes(i)) [nx, ny] = [-1, 0];
-                            else if (seatRoles.footIdxs.includes(i)) [nx, ny] = [1, 0];
-                            else if (seatRoles.sideTopIdxs.includes(i)) [nx, ny] = [0, -1];
-                            else [nx, ny] = [0, 1];
-                          } else {
-                            // Outward normal of the elliptical seat ring.
-                            const rw = renderPos.w / 2 + 34;
-                            const rh = renderPos.h / 2 + 34;
-                            nx = o.dx / (rw * rw);
-                            ny = o.dy / (rh * rh);
-                          }
-                          const facing = rotateOffset(nx, ny, tRot);
-                          const tallTag = tagsCrowded && Math.abs(facing.dy) >= Math.abs(facing.dx);
+                          const tallTag = tallTagOfSeat[i];
                           const boxW = namesOnMap ? (tallTag ? 22 : 68) : 16;
                           // Crowded (rotated) tags were capped at 58px tall — only room for
                           // a handful of characters before the ellipsis kicked in, so most
