@@ -765,6 +765,10 @@ function computeFlatViolations(
     if (!seatA || !seatB) return { ...p, status: "unseated" as const };
     const sa = seatsById[seatA];
     const sb = seatsById[seatB];
+    // Shrinking a table's seat count removes seats before the cleanup effect
+    // prunes assignments to them, so for one render a guest can point at a
+    // seat that no longer exists. Treat them as unseated rather than crash.
+    if (!sa || !sb) return { ...p, status: "unseated" as const };
     const sameTable = sa.tableId === sb.tableId;
     const linked = p.mode === "table" ? sameTable : sameTable && areAdjacent(sa.seatIdx, sb.seatIdx, sa.capacity);
     const ok = p.type === "must" ? linked : !linked;
@@ -1930,6 +1934,7 @@ export default function SeatingPlanner({
     const s = seatsById[seatId];
     if (!s) return { x: 0, y: 0 };
     const pos = layout.positions[s.tableId];
+    if (!pos) return { x: 0, y: 0 };
     const table = tableById[s.tableId];
     const shape = table?.shape ?? "round";
     const o = seatOffset(shape, pos.w, pos.h, s.seatIdx, s.capacity, 34, table?.headCount, table?.footCount);
