@@ -800,10 +800,20 @@ function solveSeating(
   seatsById: Record<string, Seat>,
   fillMode: FillMode = "spread",
   previousAssignment: SeatAssignment = {},
-  autoGroupPairs: FlatPair[] = []
+  autoGroupPairs: FlatPair[] = [],
+  // Guests who must end up in one of a given set of seats — e.g. someone the
+  // assistant was just told to put at the head table. They can still move
+  // between those seats (to satisfy a "not next to" rule, say) but never
+  // leave them. Weighted far above any rule so a pin always wins.
+  pinnedSeatsOfGuest: Record<string, string[]> = {}
 ): SeatAssignment {
   const n = seats.length;
   if (n === 0 || guestIds.length === 0) return {};
+  const pinnedSets: Record<string, Set<string>> = {};
+  for (const [gid, sids] of Object.entries(pinnedSeatsOfGuest)) {
+    if (sids.length) pinnedSets[gid] = new Set(sids);
+  }
+  const hasPins = Object.keys(pinnedSets).length > 0;
 
   const distinctTableIds = [...new Set(seats.map((s) => s.tableId))];
   const avgPerTable = distinctTableIds.length ? guestIds.length / distinctTableIds.length : 0;
@@ -823,6 +833,12 @@ function solveSeating(
 
   function cost(assign: (string | null)[], guestPos: Record<string, number>) {
     let total = 0;
+    if (hasPins) {
+      for (const [gid, allowed] of Object.entries(pinnedSets)) {
+        const pos = guestPos[gid];
+        if (pos === undefined || !allowed.has(seats[pos].id)) total += 100;
+      }
+    }
     for (const p of flatPairs) {
       const pa = guestPos[p.aId];
       const pb = guestPos[p.bId];
@@ -2868,12 +2884,17 @@ export default function SeatingPlanner({
     // that already has people seated, re-run the solver at the end of the batch.
     // (Appended last, so result indices still line up with the checklist shown.)
     const RULE_OPS: AgentOperationType[] = ["add_constraint", "remove_constraint", "set_group_seating_mode"];
-    const opsToApply: AgentOperation[] =
+    const autoRegenerate =
       operations.some((op) => RULE_OPS.includes(op.type)) &&
       !operations.some((op) => op.type === "regenerate_plan" || op.type === "clear_seating") &&
-      Object.keys(seatAssignment).length > 0
-        ? [...operations, { type: "regenerate_plan" }]
-        : operations;
+      Object.keys(seatAssignment).length > 0;
+    const opsToApply: AgentOperation[] = autoRegenerate ? [...operations, { type: "regenerate_plan" }] : operations;
+
+    // Guests this batch explicitly placed (seat_guest) → the seats they're allowed
+    // in. A later regenerate_plan in the same batch keeps them there, so "keep A
+    // and B at the head table but not next to each other" can't get undone by
+    // the solver pulling them back toward their group's table.
+    const pinnedSeatsOfGuest: Record<string, string[]> = {};
 
     opsToApply.forEach((op, index) => {
       try {
@@ -3001,6 +3022,7 @@ export default function SeatingPlanner({
             const position = op.seatPosition === "head" || op.seatPosition === "foot" ? op.seatPosition : null;
 
             if (!position) {
+              pinnedSeatsOfGuest[g.id] = buildSeats([table]).map((s) => s.id);
               // Already at this table → nothing to move.
               if (fromSeatId && fromSeatId.split("#")[0] === table.id) break;
               const occupied = new Set(Object.keys(next));
@@ -3020,6 +3042,7 @@ export default function SeatingPlanner({
             const targetIdxs = position === "head" ? roles.headIdxs : roles.footIdxs;
             if (targetIdxs.length === 0) throw new Error(`"${table.label}" has no seat at the ${position}.`);
             const targetSeatIds = targetIdxs.map((i) => `${table.id}#${i}`);
+            pinnedSeatsOfGuest[g.id] = targetSeatIds;
             if (fromSeatId && targetSeatIds.includes(fromSeatId)) break; // already there
 
             // Prefer a free head/foot seat; otherwise take the first one and move its occupant.
@@ -3118,9 +3141,17 @@ export default function SeatingPlanner({
           case "regenerate_plan": {
             const workingTables = buildTables(workingTableGroups).filter((t) => !deletedTableSet.has(t.id));
             let poolTables = workingTables;
+            // Only pins for guests still on the list, whose seats still exist.
+            const pins: Record<string, string[]> = {};
+            const workingGuestIds = new Set(workingGuests.map((g) => g.id));
+            for (const [gid, sids] of Object.entries(pinnedSeatsOfGuest)) {
+              if (workingGuestIds.has(gid)) pins[gid] = sids;
+            }
+            const pinnedTableIds = new Set(Object.values(pins).flatMap((sids) => sids.map((sid) => sid.split("#")[0])));
             if (fillMode === "consolidate") {
               const chosenIds = pickConsolidatedTables(workingTables, workingGuests.length);
-              poolTables = workingTables.filter((t) => chosenIds.includes(t.id));
+              // A table someone was just pinned to always stays in play.
+              poolTables = workingTables.filter((t) => chosenIds.includes(t.id) || pinnedTableIds.has(t.id));
             }
             const poolSeats = buildSeats(poolTables);
             if (poolSeats.length < workingGuests.length) throw new Error("Not enough seats for all guests.");
@@ -3137,8 +3168,12 @@ export default function SeatingPlanner({
               workingFlatPairs,
               poolSeatsById,
               fillMode,
-              minimizeChanges ? workingSeatAssignment : {},
-              workingAutoGroupPairs
+              // When the app re-runs the solver on its own after a rule change
+              // (the user never asked for a reshuffle), always start from the
+              // current plan so only what the new rule needs actually moves.
+              minimizeChanges || autoRegenerate ? workingSeatAssignment : {},
+              workingAutoGroupPairs,
+              pins
             );
             {
               const poolIds = new Set(poolTables.map((t) => t.id));
