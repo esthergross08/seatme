@@ -15,7 +15,7 @@ export async function GET(request: Request) {
   if (!role) return NextResponse.json({ error: "Not signed in or event not found." }, { status: 403 });
 
   try {
-    const auth = await getValidAccessToken(supabase, eventId);
+    const auth = await getValidAccessToken(eventId);
     if (!auth) return NextResponse.json({ connected: false, boards: [] });
     const boards = await listBoards(auth.accessToken);
     return NextResponse.json({

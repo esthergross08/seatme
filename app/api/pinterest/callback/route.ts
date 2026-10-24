@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getEventRole } from "@/lib/eventAccess";
 import { exchangeCodeForToken } from "@/lib/pinterest";
 
@@ -31,7 +32,7 @@ export async function GET(request: Request) {
   }
 
   const supabase = await createClient();
-  const { role } = await getEventRole(supabase, eventId);
+  const { role, userId } = await getEventRole(supabase, eventId);
   if (!role || role === "viewer") {
     return redirectToEvent("pinterest=error&reason=forbidden");
   }
@@ -41,9 +42,10 @@ export async function GET(request: Request) {
   try {
     const token = await exchangeCodeForToken(code, redirectUri);
     const nowMs = Date.now();
-    const { error: upsertError } = await supabase.from("pinterest_connections").upsert(
+    const { error: upsertError } = await createAdminClient().from("pinterest_connections").upsert(
       {
         event_id: eventId,
+        connected_by: userId,
         access_token: token.access_token,
         refresh_token: token.refresh_token,
         token_expires_at: new Date(nowMs + token.expires_in * 1000).toISOString(),

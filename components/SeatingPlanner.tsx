@@ -33,6 +33,7 @@ import {
   Pencil,
   MapPin,
   RotateCw,
+  MessageCircle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -188,6 +189,9 @@ interface Guest {
   // above stays the single combined display string derived from this on submit —
   // this is the authoritative source for re-populating the RSVP form on edit.
   mealChoices?: Record<string, string>;
+  // The guest's own comment from the public RSVP form. Kept apart from `note`
+  // (the planner's private note), which guests never see or overwrite.
+  rsvpComment?: string;
 }
 type GroupSeatingMode = "together" | "mixed";
 interface Group {
@@ -275,6 +279,41 @@ interface SeatingPlannerProps {
   initialLocation?: string | null;
   initialMaxCapacity?: number | null;
   initialRsvpEnabled?: boolean;
+  /** The event's updated_at when the page loaded, for detecting newer saves. */
+  initialUpdatedAt?: string | null;
+}
+
+// ---------- RSVP merge (autosave conflicts) ----------
+// Fields a guest can change from the public RSVP page while the planner is open.
+const RSVP_FIELDS = ["rsvpStatus", "mealChoice", "mealChoices", "rsvpComment"] as const;
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+// When an autosave finds the event was saved elsewhere since this planner last
+// synced (usually a guest RSVP), carry over any RSVP fields that changed on the
+// server since `base` (the last version this planner saved or loaded) into the
+// local guest list. Everything else stays as edited locally. Returns the
+// merged guests and the ids of guests who newly declined (to unseat them).
+function mergeRemoteRsvps(local: Guest[], base: Guest[], remote: Guest[]) {
+  const baseById = new Map(base.map((g) => [g.id, g]));
+  const remoteById = new Map(remote.map((g) => [g.id, g]));
+  const newlyDeclined: string[] = [];
+  let changed = false;
+  const guests = local.map((g) => {
+    const r = remoteById.get(g.id);
+    if (!r) return g;
+    const b = baseById.get(g.id);
+    let next = g;
+    for (const field of RSVP_FIELDS) {
+      if (!sameValue(r[field], b?.[field]) && !sameValue(r[field], g[field])) {
+        next = { ...next, [field]: r[field] } as Guest;
+        changed = true;
+      }
+    }
+    if (next.rsvpStatus === "declined" && g.rsvpStatus !== "declined") newlyDeclined.push(g.id);
+    return next;
+  });
+  return { guests, newlyDeclined, changed };
 }
 
 // ---------- geometry helpers ----------
@@ -1142,6 +1181,7 @@ export default function SeatingPlanner({
   initialLocation,
   initialMaxCapacity,
   initialRsvpEnabled,
+  initialUpdatedAt,
 }: SeatingPlannerProps) {
   const readOnly = role === "viewer";
 
@@ -1310,6 +1350,14 @@ export default function SeatingPlanner({
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const hydrated = useRef(false);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The server version this planner last saved or loaded: each save only lands
+  // if the event is still at that version, so a guest's RSVP (or another
+  // collaborator's save) made in the meantime is never silently overwritten.
+  const lastSyncedAt = useRef<string | null>(initialUpdatedAt ?? null);
+  const lastSyncedGuests = useRef<Guest[]>(initialData?.guests ?? []);
+  // Saves run one at a time, so an in-flight save is never mistaken for
+  // someone else's change by the next one.
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     if (!hydrated.current) {
@@ -1319,41 +1367,89 @@ export default function SeatingPlanner({
     if (readOnly) return;
     setSaveStatus("saving");
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(async () => {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("events")
-        .update({
-          name: eventName,
-          event_date: eventDate || null,
-          location: location || null,
-          max_capacity: maxCapacity === "" ? null : maxCapacity,
-          rsvp_enabled: rsvpEnabled,
-          data: {
-            tableGroups,
-            guests,
-            groups,
-            constraints,
-            seatAssignment,
-            fillMode,
-            tableNameOverrides,
-            tablePositions,
-            deletedTableIds,
-            tableRotations,
-            hiddenTableIds,
-            floorPlan,
-            fixtures,
-            fixturePositions,
-            posterLayout,
-            posterPalette,
-            posterFont,
-            rsvpConfig: { collectComments, courses },
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", eventId);
-      setSaveStatus(error ? "error" : "saved");
+    saveTimeout.current = setTimeout(() => {
+      saveQueue.current = saveQueue.current.then(runSave, runSave);
     }, 800);
+
+    async function runSave() {
+      const supabase = createClient();
+      const savedAt = new Date().toISOString();
+      const payload = {
+        name: eventName,
+        event_date: eventDate || null,
+        location: location || null,
+        max_capacity: maxCapacity === "" ? null : maxCapacity,
+        rsvp_enabled: rsvpEnabled,
+        data: {
+          tableGroups,
+          guests,
+          groups,
+          constraints,
+          seatAssignment,
+          fillMode,
+          tableNameOverrides,
+          tablePositions,
+          deletedTableIds,
+          tableRotations,
+          hiddenTableIds,
+          floorPlan,
+          fixtures,
+          fixturePositions,
+          posterLayout,
+          posterPalette,
+          posterFont,
+          rsvpConfig: { collectComments, courses },
+        },
+        updated_at: savedAt,
+      };
+
+      const trySave = async (expectedAt: string | null) => {
+        let query = supabase.from("events").update(payload).eq("id", eventId);
+        if (expectedAt) query = query.eq("updated_at", expectedAt);
+        return query.select("updated_at");
+      };
+
+      let { data: saved, error } = await trySave(lastSyncedAt.current);
+
+      if (!error && (!saved || saved.length === 0)) {
+        // Saved elsewhere since we last synced — usually a guest's RSVP.
+        const { data: latest, error: reloadError } = await supabase
+          .from("events")
+          .select("data, updated_at")
+          .eq("id", eventId)
+          .single();
+        if (reloadError || !latest) {
+          setSaveStatus("error");
+          return;
+        }
+        const remoteGuests: Guest[] = Array.isArray(latest.data?.guests) ? latest.data.guests : [];
+        const merge = mergeRemoteRsvps(guests, lastSyncedGuests.current, remoteGuests);
+        lastSyncedAt.current = latest.updated_at;
+        lastSyncedGuests.current = remoteGuests;
+        if (merge.changed) {
+          // Bring the RSVPs into the planner; that state change triggers a
+          // fresh autosave against the version we just read.
+          setGuests(merge.guests);
+          if (merge.newlyDeclined.length > 0) {
+            const declined = new Set(merge.newlyDeclined);
+            setSeatAssignment((prev) =>
+              Object.fromEntries(Object.entries(prev).filter(([, guestId]) => !declined.has(guestId)))
+            );
+          }
+          return;
+        }
+        // Nothing RSVP-related to bring in: save our version on top.
+        ({ data: saved, error } = await trySave(lastSyncedAt.current));
+      }
+
+      if (!error && saved && saved.length > 0) {
+        lastSyncedAt.current = saved[0].updated_at;
+        lastSyncedGuests.current = guests;
+        setSaveStatus("saved");
+      } else {
+        setSaveStatus("error");
+      }
+    }
     return () => {
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
     };
@@ -1711,7 +1807,11 @@ export default function SeatingPlanner({
     const q = guestSearch.trim().toLowerCase();
     let filtered = q
       ? guests.filter(
-          (g) => g.name.toLowerCase().includes(q) || (g.note ?? "").toLowerCase().includes(q) || (g.mealChoice ?? "").toLowerCase().includes(q)
+          (g) =>
+            g.name.toLowerCase().includes(q) ||
+            (g.note ?? "").toLowerCase().includes(q) ||
+            (g.rsvpComment ?? "").toLowerCase().includes(q) ||
+            (g.mealChoice ?? "").toLowerCase().includes(q)
         )
       : guests;
     if (rsvpFilter !== "all") {
@@ -4553,6 +4653,17 @@ export default function SeatingPlanner({
                             style={{ color: C.muted }}
                           />
                         </div>
+                        {g.rsvpComment && (
+                          <div className="flex items-start gap-1.5 mt-1 text-[11px]" style={{ color: C.muted }}>
+                            <MessageCircle size={11} className="shrink-0 mt-[2px]" style={{ color: C.sage }} />
+                            <span>
+                              <span className="font-medium" style={{ color: C.sage }}>
+                                From their RSVP:
+                              </span>{" "}
+                              {g.rsvpComment}
+                            </span>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>

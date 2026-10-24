@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import SeatingPlanner from "@/components/SeatingPlanner";
+import { getEventRole } from "@/lib/eventAccess";
 
 export default async function EventPage({
   params,
@@ -30,10 +31,8 @@ export default async function EventPage({
     .select("email, role")
     .eq("event_id", id);
 
-  const role =
-    event.owner_id === user.id
-      ? "owner"
-      : members?.find((m) => m.email === user.email)?.role ?? "viewer";
+  const { role } = await getEventRole(supabase, id);
+  if (!role) notFound();
 
   return (
     <Suspense fallback={null}>
@@ -41,12 +40,13 @@ export default async function EventPage({
         eventId={event.id}
         initialName={event.name ?? "Untitled event"}
         initialData={event.data ?? null}
-        role={role as "owner" | "editor" | "viewer"}
+        role={role}
         members={members ?? []}
         initialEventDate={event.event_date ?? null}
         initialLocation={event.location ?? null}
         initialMaxCapacity={event.max_capacity ?? null}
         initialRsvpEnabled={event.rsvp_enabled ?? false}
+        initialUpdatedAt={event.updated_at ?? null}
       />
     </Suspense>
   );

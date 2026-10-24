@@ -16,6 +16,8 @@ interface GuestRecord {
   rsvpStatus?: "attending" | "pending" | "declined";
   mealChoice?: string;
   mealChoices?: Record<string, string>;
+  /** The guest's own comment from the RSVP form. Separate from `note`, which is the planner's private note. */
+  rsvpComment?: string;
   [key: string]: unknown;
 }
 
@@ -33,6 +35,9 @@ function resolveCourses(rsvpConfig: EventData["rsvpConfig"]): MenuCourse[] {
   if (rsvpConfig?.mealOptions?.length) return [{ id: "legacy-meal", name: "Meal", options: rsvpConfig.mealOptions }];
   return [];
 }
+
+const MAX_COMMENT_LENGTH = 1000;
+const MAX_SAVE_ATTEMPTS = 3;
 
 function normalizeName(s: string) {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -67,7 +72,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const { data: event, error: eventError } = await admin
     .from("events")
-    .select("id, rsvp_enabled, data")
+    .select("id, rsvp_enabled, data, updated_at")
     .eq("id", eventId)
     .single();
 
@@ -111,7 +116,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       name: g.name,
       rsvpStatus: g.rsvpStatus ?? "pending",
       mealChoices: g.mealChoices ?? {},
-      note: g.note ?? "",
+      // Only the guest's own earlier comment — never the planner's private
+      // `note` (dietary needs, accessibility, seating remarks).
+      note: g.rsvpComment ?? "",
     });
   }
 
@@ -119,7 +126,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const guestId = typeof body.guestId === "string" ? body.guestId : "";
     const rsvpStatus = body.rsvpStatus;
     const submittedChoices = body.mealChoices && typeof body.mealChoices === "object" ? body.mealChoices : {};
-    const note = typeof body.note === "string" ? body.note.trim() : "";
+    const collectComments = data.rsvpConfig?.collectComments ?? false;
+    const comment =
+      collectComments && typeof body.note === "string" ? body.note.trim().slice(0, MAX_COMMENT_LENGTH) : "";
 
     if (rsvpStatus !== "attending" && rsvpStatus !== "declined") {
       return NextResponse.json({ error: "Please choose whether you're attending." }, { status: 400 });
@@ -148,36 +157,68 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .map((c) => `${c.name}: ${mealChoices[c.id]}`)
       .join(", ");
 
-    const idx = guests.findIndex((g) => g.id === guestId);
-    if (idx === -1) {
+    if (!guests.some((g) => g.id === guestId)) {
       return NextResponse.json({ error: "We couldn't find your invitation — try looking yourself up again." }, { status: 404 });
     }
 
-    const updatedGuests = guests.slice();
-    updatedGuests[idx] = {
-      ...updatedGuests[idx],
-      rsvpStatus,
-      mealChoice: mealChoice || undefined,
-      mealChoices: Object.keys(mealChoices).length > 0 ? mealChoices : undefined,
-      note: note || undefined,
-    };
+    // Save with an optimistic-concurrency check: the update only lands if the
+    // event hasn't changed since we read it (same updated_at). Otherwise
+    // another RSVP or the planner's autosave got in first — re-read and
+    // re-apply this guest's answer on top of the latest version, so neither
+    // change is lost. Bumping updated_at also lets an open planner notice the
+    // RSVP instead of overwriting it.
+    let current = { data, updatedAt: event.updated_at as string };
+    for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt++) {
+      const latestGuests: GuestRecord[] = Array.isArray(current.data.guests) ? current.data.guests : [];
+      const idx = latestGuests.findIndex((g) => g.id === guestId);
+      if (idx === -1) {
+        return NextResponse.json({ error: "We couldn't find your invitation — try looking yourself up again." }, { status: 404 });
+      }
 
-    // Mirror the app's own behavior: declining frees whatever seat they were
-    // assigned, so the planner's seated/unseated counts stay accurate.
-    let seatAssignment = data.seatAssignment;
-    if (rsvpStatus === "declined" && seatAssignment) {
-      const next = { ...seatAssignment };
-      const fromSeatId = Object.keys(next).find((sid) => next[sid] === guestId);
-      if (fromSeatId) delete next[fromSeatId];
-      seatAssignment = next;
+      const updatedGuests = latestGuests.slice();
+      updatedGuests[idx] = {
+        ...updatedGuests[idx],
+        rsvpStatus,
+        mealChoice: mealChoice || undefined,
+        mealChoices: Object.keys(mealChoices).length > 0 ? mealChoices : undefined,
+        rsvpComment: collectComments ? comment || undefined : updatedGuests[idx].rsvpComment,
+      };
+
+      // Mirror the app's own behavior: declining frees whatever seat they were
+      // assigned, so the planner's seated/unseated counts stay accurate.
+      let seatAssignment = current.data.seatAssignment;
+      if (rsvpStatus === "declined" && seatAssignment) {
+        const next = { ...seatAssignment };
+        const fromSeatId = Object.keys(next).find((sid) => next[sid] === guestId);
+        if (fromSeatId) delete next[fromSeatId];
+        seatAssignment = next;
+      }
+
+      const newData: EventData = { ...current.data, guests: updatedGuests, seatAssignment };
+      const { data: saved, error: updateError } = await admin
+        .from("events")
+        .update({ data: newData, updated_at: new Date().toISOString() })
+        .eq("id", eventId)
+        .eq("updated_at", current.updatedAt)
+        .select("id");
+      if (updateError) {
+        return NextResponse.json({ error: "Couldn't save your RSVP. Try again in a bit." }, { status: 500 });
+      }
+      if (saved && saved.length > 0) {
+        return NextResponse.json({ ok: true });
+      }
+
+      // Someone else saved in between: re-read and try again.
+      const { data: latest, error: reloadError } = await admin
+        .from("events")
+        .select("data, updated_at")
+        .eq("id", eventId)
+        .single();
+      if (reloadError || !latest) break;
+      current = { data: latest.data || {}, updatedAt: latest.updated_at };
     }
 
-    const newData: EventData = { ...data, guests: updatedGuests, seatAssignment };
-    const { error: updateError } = await admin.from("events").update({ data: newData }).eq("id", eventId);
-    if (updateError) {
-      return NextResponse.json({ error: "Couldn't save your RSVP. Try again in a bit." }, { status: 500 });
-    }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ error: "Couldn't save your RSVP. Try again in a bit." }, { status: 503 });
   }
 
   return NextResponse.json({ error: "Invalid request." }, { status: 400 });

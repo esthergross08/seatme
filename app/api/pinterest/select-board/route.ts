@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getEventRole } from "@/lib/eventAccess";
 
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "You don't have edit access to this event." }, { status: 403 });
   }
 
-  const { error } = await supabase
+  const { error } = await createAdminClient()
     .from("pinterest_connections")
     .update({ board_id: boardId, board_name: boardName || null, updated_at: new Date().toISOString() })
     .eq("event_id", eventId);

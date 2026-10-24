@@ -61,7 +61,7 @@ export async function POST(request: Request) {
 
   let pins;
   try {
-    const auth = await getValidAccessToken(supabase, eventId);
+    const auth = await getValidAccessToken(eventId);
     if (!auth) return NextResponse.json({ error: "Pinterest isn't connected for this event yet." }, { status: 404 });
     if (!auth.connection.board_id) return NextResponse.json({ error: "Pick a board first." }, { status: 400 });
     pins = await listBoardPins(auth.accessToken, auth.connection.board_id, 15);

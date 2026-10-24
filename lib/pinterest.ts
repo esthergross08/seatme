@@ -4,7 +4,11 @@
 // Auth model: Authorization Code grant (per-user OAuth). Tokens are stored per
 // event in the `pinterest_connections` table and are only ever touched
 // server-side — API routes never return raw access/refresh tokens to the
-// client.
+// client. The table has no RLS policies for signed-in users at all (2026-10-24),
+// so it's read and written only through the service-role client below, and
+// every caller must check the user's role on the event first.
+
+import { createAdminClient } from "@/lib/supabase/admin";
 
 const OAUTH_AUTHORIZE_URL = "https://www.pinterest.com/oauth/";
 const OAUTH_TOKEN_URL = "https://api.pinterest.com/v5/oauth/token";
@@ -99,11 +103,11 @@ export interface PinterestConnectionRow {
 // Returns a valid access token for the event's Pinterest connection,
 // transparently refreshing (and persisting the refreshed tokens) if the
 // current access token is expired or close to expiring.
+// Callers must have checked the user's access to `eventId` first.
 export async function getValidAccessToken(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
   eventId: string
 ): Promise<{ accessToken: string; connection: PinterestConnectionRow } | null> {
+  const supabase = createAdminClient();
   const { data: connection } = await supabase
     .from("pinterest_connections")
     .select("*")

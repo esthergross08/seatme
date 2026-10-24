@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { AGENT_OPERATION_TYPES, type AgentOperation } from "@/lib/agentOperations";
+import { getEventRole } from "@/lib/eventAccess";
 
 export const runtime = "nodejs";
 
@@ -293,25 +294,9 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-
-  const { data: event, error: eventError } = await supabase
-    .from("events")
-    .select("id, owner_id")
-    .eq("id", eventId)
-    .single();
-  if (eventError || !event) return NextResponse.json({ error: "Event not found." }, { status: 404 });
-
-  let role: "owner" | "editor" | "viewer" = "viewer";
-  if (event.owner_id === user.id) {
-    role = "owner";
-  } else {
-    const { data: members } = await supabase.from("event_members").select("email, role").eq("event_id", eventId);
-    role = (members?.find((m) => m.email === user.email)?.role as "editor" | "viewer" | undefined) ?? "viewer";
-  }
+  const { role, userId } = await getEventRole(supabase, eventId);
+  if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  if (!role) return NextResponse.json({ error: "Event not found." }, { status: 404 });
   if (role === "viewer") {
     return NextResponse.json({ error: "You have view-only access to this event." }, { status: 403 });
   }
