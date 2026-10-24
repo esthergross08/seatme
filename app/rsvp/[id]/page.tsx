@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import RsvpForm from "@/components/RsvpForm";
 import { C, FONT } from "@/lib/theme";
+import { PHOTOS, photoUrl } from "@/lib/images";
 
 
 function formatEventDate(dateStr: string) {
@@ -62,6 +63,16 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
           </div>
         ) : (
           <div className="rounded-2xl border overflow-hidden" style={{ borderColor: C.line, backgroundColor: C.card }}>
+            <div
+              role="img"
+              aria-label={PHOTOS.roseTable.alt}
+              className="h-36 sm:h-44"
+              style={{
+                backgroundImage: `url('${photoUrl(PHOTOS.roseTable, 900)}')`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+            />
             <div className="px-8 pt-8 pb-6 text-center border-b" style={{ borderColor: C.line }}>
               <div className="text-[11px] tracking-[0.2em] uppercase font-semibold mb-2" style={{ color: C.gold }}>
                 You're invited

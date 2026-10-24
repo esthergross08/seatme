@@ -4,6 +4,7 @@ import { useState, type FormEvent, type CSSProperties, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { C, FONT } from "@/lib/theme";
+import { PHOTOS, photoUrl } from "@/lib/images";
 
 
 function GoogleIcon() {
@@ -167,20 +168,37 @@ function LoginForm() {
 
   const showingConfirmation = status === "sent";
 
+  const photo = PHOTOS.tableCenterpiece;
+
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        width: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: C.paper,
-        fontFamily: FONT.body,
-        padding: "24px 16px",
-        boxSizing: "border-box",
-      }}
-    >
+    <div className="flex" style={{ minHeight: "100vh", width: "100%", backgroundColor: C.paper, fontFamily: FONT.body }}>
+      {/* Desktop: photo panel beside the form. */}
+      <div
+        className="hidden lg:flex lg:w-1/2 flex-col justify-end"
+        role="img"
+        aria-label={photo.alt}
+        style={{
+          backgroundImage: `linear-gradient(to bottom, rgba(34,31,43,0.05), rgba(34,31,43,0.65)), url('${photoUrl(photo, 1600)}')`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          padding: 48,
+        }}
+      >
+        <p style={{ fontFamily: FONT.display, fontSize: 30, lineHeight: 1.2, color: "#fff", margin: 0, maxWidth: 420 }}>
+          Every guest, in the right seat.
+        </p>
+      </div>
+
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "24px 16px",
+          boxSizing: "border-box",
+        }}
+      >
       <div
         style={{
           width: "100%",
@@ -189,8 +207,22 @@ function LoginForm() {
           background: "#fff",
           borderRadius: 16,
           border: `1px solid ${C.line}`,
+          overflow: "hidden",
         }}
       >
+        {/* Phones and tablets: a slim photo band at the top of the card instead. */}
+        <div
+          className="lg:hidden"
+          role="img"
+          aria-label={photo.alt}
+          style={{
+            height: 110,
+            margin: "-32px -32px 24px",
+            backgroundImage: `url('${photoUrl(photo, 800)}')`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        />
         <div
           style={{
             fontSize: 11,
@@ -342,6 +374,7 @@ function LoginForm() {
             </div>
           </>
         )}
+      </div>
       </div>
     </div>
   );

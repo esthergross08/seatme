@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Search, Trash2, Undo2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { C, FONT } from "@/lib/theme";
+import { PHOTOS, photoUrl } from "@/lib/images";
 
 
 interface EventRow {
@@ -206,7 +207,30 @@ export default function EventsList({ events, userId }: { events: EventRow[]; use
       )}
 
       <div className="flex flex-col gap-3">
-        {(searching ? visible.length === 0 : upcoming.length === 0) && (
+        {!searching && upcoming.length === 0 && past.length === 0 && (
+          // First visit: a warmer welcome than a plain "nothing here" box.
+          <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.line, backgroundColor: C.card }}>
+            <div
+              role="img"
+              aria-label={PHOTOS.longTable.alt}
+              className="h-40 sm:h-52"
+              style={{
+                backgroundImage: `url('${photoUrl(PHOTOS.longTable, 1200)}')`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+            />
+            <div className="p-6 text-center">
+              <h2 className="text-xl mb-1" style={{ fontFamily: FONT.display, color: C.ink }}>
+                Your first event starts here
+              </h2>
+              <p className="text-sm" style={{ color: C.muted }}>
+                Create an event above to add your guests, set up tables, and build a seating plan.
+              </p>
+            </div>
+          </div>
+        )}
+        {(searching ? visible.length === 0 : upcoming.length === 0 && past.length > 0) && (
           <div className="p-6 rounded-xl border text-center" style={{ borderColor: C.line, backgroundColor: C.card }}>
             <p className="text-sm" style={{ color: C.muted }}>
               {searching
