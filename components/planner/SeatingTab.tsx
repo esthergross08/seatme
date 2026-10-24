@@ -36,6 +36,7 @@ import {
   Pencil,
   MapPin,
   RotateCw,
+  RotateCcw,
   MessageCircle,
   LayoutDashboard,
 } from "lucide-react";
@@ -125,6 +126,8 @@ import { IconBtn, SectionTitle, MapMenuButton, FixtureSizeEditor, SettingRow } f
 
 export default function SeatingTab() {
   const {
+    hasManualLayout,
+    resetLayoutWithUndo,
     role,
     readOnly,
     tableGroups,
@@ -602,6 +605,17 @@ export default function SeatingTab() {
             <Move size={11} />
             Pinch or Ctrl+scroll to zoom · drag the floor to move around{readOnly ? "" : " · tap a table for options, or press and hold to drag it"}
           </span>
+          {!readOnly && hasManualLayout && (
+            <button
+              type="button"
+              onClick={resetLayoutWithUndo}
+              className="inline-flex items-center gap-1 font-semibold"
+              style={{ color: C.gold }}
+              title="Put every table and fixture back in a tidy grid (you can undo this)"
+            >
+              <RotateCcw size={11} /> Reset layout
+            </button>
+          )}
         </div>
       )}
 

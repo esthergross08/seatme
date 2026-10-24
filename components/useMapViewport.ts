@@ -156,17 +156,23 @@ export function useMapViewport(contentWidth: number, contentHeight: number) {
     [minScale]
   );
 
-  // Keep at least a sliver of the room on screen so it can't be flung away and lost.
+  // Keep the room within its limits. When it's larger than the screen on an
+  // axis, its edges can't be dragged past the screen's edges (no empty space
+  // beyond the plan); when it's smaller, it stays fully on screen.
   const clampPan = useCallback(
     (v: View): View => {
       if (!size.width || !size.height) return v;
-      const margin = 80;
-      const w = contentWidth * v.scale;
-      const h = contentHeight * v.scale;
+      const pad = FIT_PADDING;
+      const axis = (pos: number, content: number, viewport: number) => {
+        if (content + pad * 2 <= viewport) {
+          return Math.min(viewport - content - pad, Math.max(pad, pos));
+        }
+        return Math.min(pad, Math.max(viewport - content - pad, pos));
+      };
       return {
         scale: v.scale,
-        x: Math.min(size.width - margin, Math.max(margin - w, v.x)),
-        y: Math.min(size.height - margin, Math.max(margin - h, v.y)),
+        x: axis(v.x, contentWidth * v.scale, size.width),
+        y: axis(v.y, contentHeight * v.scale, size.height),
       };
     },
     [size.width, size.height, contentWidth, contentHeight]

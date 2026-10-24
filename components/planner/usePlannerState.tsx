@@ -1059,9 +1059,31 @@ export function usePlannerState({
     if (readOnly) return;
     setTableNameOverrides((m) => ({ ...m, [tableId]: name }));
   };
+  // Moving one table must not move any other. Tables and fixtures nobody has
+  // placed by hand are laid out in an automatic grid whose slots depend on how
+  // many are still auto-placed — so taking one out of the grid used to reshuffle
+  // all the rest. Before the first manual move, freeze every auto-placed table
+  // and fixture exactly where it's drawn now.
   const moveTable = (tableId: string, x: number, y: number) => {
     if (readOnly) return;
-    setTablePositions((m) => ({ ...m, [tableId]: { x, y } }));
+    setTablePositions((m) => {
+      const next = { ...m };
+      for (const [id, pos] of Object.entries(layout.positions) as [string, { cx: number; cy: number }][]) {
+        if (!next[id]) next[id] = { x: pos.cx, y: pos.cy };
+      }
+      next[tableId] = { x, y };
+      return next;
+    });
+    const unplacedFixtures = fixtures.filter((f) => !fixturePositions[f.id] && room.fixtures[f.id]);
+    if (unplacedFixtures.length > 0) {
+      setFixturePositions((m) => {
+        const next = { ...m };
+        for (const f of unplacedFixtures) {
+          if (!next[f.id]) next[f.id] = { x: room.fixtures[f.id].cx, y: room.fixtures[f.id].cy };
+        }
+        return next;
+      });
+    }
   };
   // Take one empty table off the floor plan. Its name and position are kept, so
   // adding it back puts it right where it was. Tables with guests can't be
@@ -1112,9 +1134,34 @@ export function usePlannerState({
     const m = fixtureSizeM(f, fixtureGuestCount);
     setFixtureSizeM(fixtureId, m.w * factor, m.h * factor);
   };
+  // Put every table and fixture back in the automatic grid (undoable) — the way
+  // out when hand-placed items have ended up overlapping.
+  const hasManualLayout = Object.keys(tablePositions).length > 0 || Object.keys(fixturePositions).length > 0;
+  const resetLayoutWithUndo = () => {
+    if (readOnly || !hasManualLayout) return;
+    const prevTables = tablePositions;
+    const prevFixtures = fixturePositions;
+    setTablePositions({});
+    setFixturePositions({});
+    pushUndo("Reset the floor plan layout.", () => {
+      setTablePositions(prevTables);
+      setFixturePositions(prevFixtures);
+    });
+    // Show the whole room again once the new layout has rendered.
+    window.setTimeout(() => map.fit(), 60);
+  };
+  // Same rule as moveTable: unplaced fixtures share a row below the tables,
+  // so freeze the others where they're drawn before moving this one.
   const moveFixture = (fixtureId: string, x: number, y: number) => {
     if (readOnly) return;
-    setFixturePositions((m) => ({ ...m, [fixtureId]: { x, y } }));
+    setFixturePositions((m) => {
+      const next = { ...m };
+      for (const [id, pos] of Object.entries(room.fixtures) as [string, { cx: number; cy: number }][]) {
+        if (!next[id]) next[id] = { x: pos.cx, y: pos.cy };
+      }
+      next[fixtureId] = { x, y };
+      return next;
+    });
   };
   const removeFixtureWithUndo = (id: string) => {
     if (readOnly) return;
@@ -2652,6 +2699,8 @@ export function usePlannerState({
     removeTableGroupWithUndo,
     renameTable,
     moveTable,
+    hasManualLayout,
+    resetLayoutWithUndo,
     deleteTableWithUndo,
     restoreTable,
     restoreAllTables,
