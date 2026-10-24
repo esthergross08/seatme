@@ -34,6 +34,7 @@ import {
   MapPin,
   RotateCw,
   MessageCircle,
+  LayoutDashboard,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -54,6 +55,7 @@ import {
 } from "@/lib/posterTemplates";
 import { C, FONT } from "@/lib/theme";
 import { SignedImg, SignedLink } from "@/components/StorageFile";
+import EventOverview from "@/components/EventOverview";
 
 // ---------- palette / tokens ----------
 
@@ -1200,10 +1202,10 @@ export default function SeatingPlanner({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const VALID_TABS = ["setup", "guests", "seating", "decor"];
+  const VALID_TABS = ["overview", "setup", "guests", "seating", "decor"];
   const initialTabParam = searchParams.get("tab");
   const [tab, setTabState] = useState<string>(
-    initialTabParam && VALID_TABS.includes(initialTabParam) ? initialTabParam : "setup"
+    initialTabParam && VALID_TABS.includes(initialTabParam) ? initialTabParam : "overview"
   );
   const setTab = useCallback(
     (id: string) => {
@@ -3787,6 +3789,7 @@ export default function SeatingPlanner({
         {/* tab nav — horizontal pills on larger screens; mobile keeps the fixed bottom icon bar */}
         <div className="hidden sm:flex items-center gap-2 px-4 sm:px-8 pb-3 overflow-x-auto">
           {[
+            { id: "overview", label: "Overview", icon: LayoutDashboard },
             { id: "setup", label: "Tables", icon: Table2 },
             { id: "guests", label: "Guests & rules", icon: Users },
             { id: "seating", label: "Seating map", icon: LayoutGrid },
@@ -3824,6 +3827,7 @@ export default function SeatingPlanner({
       {/* mobile tab bar */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 flex justify-around p-2 border-t z-20" style={{ backgroundColor: C.card, borderColor: C.line }}>
         {[
+          { id: "overview", icon: LayoutDashboard, label: "Overview" },
           { id: "setup", icon: Table2, label: "Tables" },
           { id: "guests", icon: Users, label: "Guests & rules" },
           { id: "seating", icon: LayoutGrid, label: "Seating map" },
@@ -3847,6 +3851,33 @@ export default function SeatingPlanner({
 
       {/* main */}
       <main className="flex-1 p-6 sm:p-10 pb-36 sm:pb-10 overflow-auto">
+        {tab === "overview" && (
+          <EventOverview
+            eventName={eventName}
+            eventDate={eventDate}
+            location={location}
+            readOnly={readOnly}
+            guestsTotal={guests.length}
+            activeGuests={activeGuests.length}
+            attending={guests.filter((g) => g.rsvpStatus === "attending").length}
+            pending={guests.filter((g) => !g.rsvpStatus || g.rsvpStatus === "pending").length}
+            declined={guests.length - activeGuests.length}
+            seated={seatedCount}
+            totalSeats={totalSeats}
+            tablesCount={tables.length}
+            maxCapacity={maxCapacity === "" ? null : Number(maxCapacity)}
+            rulesCount={constraints.length}
+            rulesBroken={violatedCount}
+            notedGuests={notedGuestCount}
+            rsvpEnabled={rsvpEnabled}
+            meals={mealStats}
+            onGoTo={setTab}
+            onOpenRsvpSettings={() => {
+              setShowRsvpPanel(true);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          />
+        )}
         {tab === "setup" && (
           <div className="max-w-2xl">
             <SectionTitle eyebrow="Step one" title="Configure your tables" />
