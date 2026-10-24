@@ -1,15 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  gold: "#A8823C",
-  wine: "#8C3B3B",
-  sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 export default function FeedbackForm() {
   const [note, setNote] = useState("");
@@ -68,7 +61,7 @@ export default function FeedbackForm() {
           borderRadius: 10,
           border: `1px solid ${C.line}`,
           fontSize: 14,
-          fontFamily: "Inter, sans-serif",
+          fontFamily: FONT.body,
           color: C.ink,
           boxSizing: "border-box",
           resize: "vertical",

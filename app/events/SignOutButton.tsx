@@ -2,8 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { C } from "@/lib/theme";
 
-const C = { muted: "#736D5F" };
 
 export default function SignOutButton() {
   const router = useRouter();

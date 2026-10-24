@@ -3,16 +3,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { C } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  wine: "#8C3B3B",
-  sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 interface Member {
   email: string;

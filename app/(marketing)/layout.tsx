@@ -1,24 +1,13 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import SiteHeader from "@/components/SiteHeader";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
-const FONTS = `
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
-`;
 
 export default async function MarketingLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen w-full flex flex-col" style={{ backgroundColor: C.paper, fontFamily: "Inter, sans-serif" }}>
-      <style>{FONTS}</style>
+    <div className="min-h-screen w-full flex flex-col" style={{ backgroundColor: C.paper, fontFamily: FONT.body }}>
 
       <SiteHeader />
 

@@ -1,13 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import AccountMenu from "./AccountMenu";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-};
 
 export default async function SiteHeader() {
   const supabase = await createClient();
@@ -37,7 +32,7 @@ export default async function SiteHeader() {
         <Link
           href={logoHref}
           className="text-xl"
-          style={{ fontFamily: "Fraunces, serif", color: C.ink, textDecoration: "none" }}
+          style={{ fontFamily: FONT.display, color: C.ink, textDecoration: "none" }}
         >
           SeatMe
         </Link>

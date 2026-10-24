@@ -1,13 +1,8 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AccountForm from "@/components/AccountForm";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 export default async function AccountPage() {
   const supabase = await createClient();
@@ -28,7 +23,7 @@ export default async function AccountPage() {
       <div className="text-xs tracking-[0.2em] uppercase font-semibold mb-3" style={{ color: C.gold }}>
         Account
       </div>
-      <h1 className="text-3xl mb-2" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+      <h1 className="text-3xl mb-2" style={{ fontFamily: FONT.display, color: C.ink }}>
         My info
       </h1>
       <p className="text-sm mb-8" style={{ color: C.muted }}>

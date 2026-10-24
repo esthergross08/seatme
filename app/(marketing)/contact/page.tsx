@@ -1,10 +1,4 @@
-const C = {
-  ink: "#221F2B",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
+import { C, FONT } from "@/lib/theme";
 
 export const metadata = {
   title: "Contact — SeatMe",
@@ -16,7 +10,7 @@ export default function ContactPage() {
       <div className="text-xs tracking-[0.2em] uppercase font-semibold mb-3" style={{ color: C.gold }}>
         Contact
       </div>
-      <h1 className="text-3xl mb-4" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+      <h1 className="text-3xl mb-4" style={{ fontFamily: FONT.display, color: C.ink }}>
         Get in touch
       </h1>
       <p className="text-sm leading-relaxed mb-6" style={{ color: C.muted }}>

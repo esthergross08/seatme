@@ -3,21 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { MessageCircle, X, Send, Check, Loader2, AlertTriangle } from "lucide-react";
 import { describeOperation, type AgentOperation, type AgentApplyResult } from "@/lib/agentOperations";
+import { C, FONT } from "@/lib/theme";
 
 // Changes apply the instant the assistant proposes them (no more "Apply" /
 // "Dismiss" step) — SeatingPlanner's own Undo toast (the same one used for
 // every other destructive action) is the safety net if a batch needs undoing.
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  wine: "#8C3B3B",
-  sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 const genId = () => Math.random().toString(36).slice(2, 9);
 
@@ -123,7 +114,7 @@ export default function AgentChat({ eventId, role, getState, onApply }: AgentCha
               <div className="text-[10px] tracking-[0.18em] uppercase font-semibold" style={{ color: C.gold }}>
                 Assistant
               </div>
-              <div className="text-sm" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+              <div className="text-sm" style={{ fontFamily: FONT.display, color: C.ink }}>
                 Seating helper
               </div>
             </div>

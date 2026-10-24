@@ -1,15 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import RsvpForm from "@/components/RsvpForm";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  goldSoft: "#E7D9B8",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 function formatEventDate(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -59,7 +51,7 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
       <div className="w-full max-w-md">
         {notAvailable ? (
           <div className="rounded-2xl border p-8 text-center" style={{ borderColor: C.line, backgroundColor: C.card }}>
-            <h1 className="text-xl mb-2" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+            <h1 className="text-xl mb-2" style={{ fontFamily: FONT.display, color: C.ink }}>
               RSVP not available
             </h1>
             <p className="text-sm" style={{ color: C.muted }}>
@@ -74,7 +66,7 @@ export default async function RsvpPage({ params }: { params: Promise<{ id: strin
               <div className="text-[11px] tracking-[0.2em] uppercase font-semibold mb-2" style={{ color: C.gold }}>
                 You're invited
               </div>
-              <h1 className="text-2xl mb-1" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+              <h1 className="text-2xl mb-1" style={{ fontFamily: FONT.display, color: C.ink }}>
                 {event!.name || "Our wedding"}
               </h1>
               {(event!.event_date || event!.location) && (

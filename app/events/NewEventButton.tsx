@@ -4,15 +4,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-  wine: "#8C3B3B",
-};
 
 interface PastEvent {
   id: string;
@@ -235,7 +228,7 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
             style={{ maxWidth: 440, backgroundColor: C.card }}
           >
             <div className="flex items-center justify-between mb-1">
-              <h2 id="new-event-title" className="text-2xl" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+              <h2 id="new-event-title" className="text-2xl" style={{ fontFamily: FONT.display, color: C.ink }}>
                 New event
               </h2>
               <button

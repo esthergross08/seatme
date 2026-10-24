@@ -1,15 +1,8 @@
 "use client";
 
 import { useState, type FormEvent, type CSSProperties } from "react";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  gold: "#A8823C",
-  wine: "#8C3B3B",
-  sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 const inputStyle: CSSProperties = {
   width: "100%",
@@ -18,7 +11,7 @@ const inputStyle: CSSProperties = {
   border: `1px solid ${C.line}`,
   fontSize: 14,
   boxSizing: "border-box",
-  fontFamily: "Inter, sans-serif",
+  fontFamily: FONT.body,
   color: C.ink,
 };
 

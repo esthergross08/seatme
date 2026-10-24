@@ -5,16 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText, MapPin, Plus, Search, Sparkles, Trash2, Undo2, Upload, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  goldSoft: "#E7D9B8",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-  wine: "#8C3B3B",
-};
 
 type TableShape = "round" | "oval" | "square" | "rectangle";
 interface TableGroupRow {
@@ -380,7 +372,7 @@ export default function LocationsList({
             <div key={loc.id} className="p-5 rounded-xl border" style={{ borderColor: C.line, backgroundColor: C.card }}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-base font-medium" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+                  <div className="flex items-center gap-1.5 text-base font-medium" style={{ fontFamily: FONT.display, color: C.ink }}>
                     <MapPin size={15} style={{ color: C.gold }} />
                     {loc.name}
                   </div>
@@ -496,7 +488,7 @@ export default function LocationsList({
             style={{ maxWidth: 480, backgroundColor: C.card }}
           >
             <div className="flex items-center justify-between mb-5">
-              <h2 id="location-modal-title" className="text-2xl" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+              <h2 id="location-modal-title" className="text-2xl" style={{ fontFamily: FONT.display, color: C.ink }}>
                 {editingId ? "Edit location" : "Add location"}
               </h2>
               <button

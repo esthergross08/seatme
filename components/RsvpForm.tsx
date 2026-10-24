@@ -2,16 +2,8 @@
 
 import { useState } from "react";
 import { Check, X } from "lucide-react";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  gold: "#A8823C",
-  goldSoft: "#E7D9B8",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-  sage: "#54704F",
-  wine: "#8C3B3B",
-};
 
 type Step = "name" | "details" | "done";
 
@@ -111,7 +103,7 @@ export default function RsvpForm({
         >
           <Check size={22} />
         </div>
-        <h2 className="text-lg mb-1" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+        <h2 className="text-lg mb-1" style={{ fontFamily: FONT.display, color: C.ink }}>
           Thanks, {guestName.split(" ")[0]}!
         </h2>
         <p className="text-sm" style={{ color: C.muted }}>

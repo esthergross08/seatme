@@ -1,26 +1,32 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * SeatMe design tokens — mirrors lib/theme.ts (keep the two in sync).
+ * Exposed to Tailwind via @theme, so e.g. `bg-paper`, `text-ink`,
+ * `border-line` and `font-display` are available as utility classes.
+ */
+@theme {
+  --color-ink: #221F2B;
+  --color-paper: #F7F3EA;
+  --color-card: #FFFFFF;
+  --color-gold: #A8823C;
+  --color-gold-soft: #E7D9B8;
+  --color-wine: #8C3B3B;
+  --color-sage: #54704F;
+  --color-line: #E4DCC9;
+  --color-muted: #736D5F;
+
+  --font-display: Fraunces, serif;
+  --font-sans: Inter, sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/*
+ * SeatMe is a light, paper-toned design throughout. The old Next.js starter
+ * dark-mode override (black body, light text) is gone: it only showed up in
+ * gaps between our own backgrounds and clashed with the palette.
+ */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
 }

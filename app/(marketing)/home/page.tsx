@@ -2,16 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Wand2, LayoutGrid, Users, Sparkles, MessageCircle, FileImage } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  goldSoft: "#E7D9B8",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 const FEATURES = [
   {
@@ -79,7 +71,7 @@ export default async function LoggedInHomePage() {
           </div>
           <h1
             className="text-5xl sm:text-6xl leading-tight mb-5"
-            style={{ fontFamily: "Fraunces, serif", color: "#fff" }}
+            style={{ fontFamily: FONT.display, color: "#fff" }}
           >
             Seat Me
           </h1>
@@ -131,7 +123,7 @@ export default async function LoggedInHomePage() {
                 >
                   <Icon size={18} />
                 </div>
-                <h3 className="text-base font-semibold mb-1" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+                <h3 className="text-base font-semibold mb-1" style={{ fontFamily: FONT.display, color: C.ink }}>
                   {f.title}
                 </h3>
                 <p className="text-sm leading-relaxed" style={{ color: C.muted }}>

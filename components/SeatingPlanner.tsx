@@ -51,23 +51,10 @@ import {
   DEFAULT_POSTER_PALETTE,
   DEFAULT_POSTER_FONT,
 } from "@/lib/posterTemplates";
+import { C, FONT } from "@/lib/theme";
 
 // ---------- palette / tokens ----------
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  goldSoft: "#E7D9B8",
-  wine: "#8C3B3B",
-  sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
-const FONTS = `
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,400;1,600&display=swap');
-`;
 
 const genId = () => Math.random().toString(36).slice(2, 9);
 
@@ -1134,10 +1121,10 @@ function IconBtn({
 function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
   return (
     <div className="mb-4">
-      <div className="text-xs tracking-[0.18em] uppercase font-semibold" style={{ color: C.gold, fontFamily: "Inter, sans-serif" }}>
+      <div className="text-xs tracking-[0.18em] uppercase font-semibold" style={{ color: C.gold, fontFamily: FONT.body }}>
         {eyebrow}
       </div>
-      <h2 className="text-2xl mt-1" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+      <h2 className="text-2xl mt-1" style={{ fontFamily: FONT.display, color: C.ink }}>
         {title}
       </h2>
     </div>
@@ -3337,8 +3324,7 @@ export default function SeatingPlanner({
   const nextPane = paneIndex >= 0 && paneIndex < PANE_ORDER.length - 1 ? PANE_ORDER[paneIndex + 1] : null;
 
   return (
-    <div className="min-h-screen w-full flex flex-col" style={{ backgroundColor: C.paper, fontFamily: "Inter, sans-serif" }}>
-      <style>{FONTS}</style>
+    <div className="min-h-screen w-full flex flex-col" style={{ backgroundColor: C.paper, fontFamily: FONT.body }}>
 
       {/* header — compact, all breakpoints: badge + name + date/venue/capacity, stats, save status, share */}
       <header className="border-b" style={{ borderColor: C.line, backgroundColor: C.card }}>
@@ -3354,7 +3340,7 @@ export default function SeatingPlanner({
           <div className="flex items-center gap-3 min-w-0">
             <div
               className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
-              style={{ backgroundColor: C.goldSoft, color: C.gold, fontFamily: "Fraunces, serif" }}
+              style={{ backgroundColor: C.goldSoft, color: C.gold, fontFamily: FONT.display }}
               aria-hidden
             >
               {eventInitials(eventName)}
@@ -3366,7 +3352,7 @@ export default function SeatingPlanner({
                 disabled={readOnly}
                 aria-label="Event name"
                 className="w-full bg-transparent outline-none text-lg leading-tight"
-                style={{ fontFamily: "Fraunces, serif", color: C.ink }}
+                style={{ fontFamily: FONT.display, color: C.ink }}
               />
               <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mt-0.5">
                 <input
@@ -4388,7 +4374,7 @@ export default function SeatingPlanner({
                           disabled={readOnly}
                           aria-label="Guest name"
                           className="w-full bg-transparent outline-none text-sm"
-                          style={{ color: C.ink, fontFamily: "Fraunces, serif" }}
+                          style={{ color: C.ink, fontFamily: FONT.display }}
                         />
                         {compactGuestRows && contextLine && (
                           <div className="text-[10px] truncate" style={{ color: C.muted }}>
@@ -4868,7 +4854,7 @@ export default function SeatingPlanner({
                 <ul className="space-y-1 pl-1">
                   {notedGuests.map((g) => (
                     <li key={g.id}>
-                      <strong style={{ fontFamily: "Fraunces, serif" }}>{g.name}</strong>
+                      <strong style={{ fontFamily: FONT.display }}>{g.name}</strong>
                       {seatOfGuest[g.id] ? ` (${tableById[seatsById[seatOfGuest[g.id]]?.tableId ?? ""]?.label ?? ""})` : " (unseated)"}
                       : {g.note}
                     </li>
@@ -4917,7 +4903,7 @@ export default function SeatingPlanner({
                       title={g.note || undefined}
                       className="px-3 py-1.5 rounded-lg text-sm cursor-pointer border select-none flex items-center gap-1.5"
                       style={{
-                        fontFamily: "Fraunces, serif",
+                        fontFamily: FONT.display,
                         backgroundColor: picked === g.id ? C.gold : C.card,
                         color: picked === g.id ? "#fff" : C.ink,
                         borderColor: C.goldSoft,
@@ -5648,7 +5634,7 @@ export default function SeatingPlanner({
                             // Name stays upright and readable whichever way the table is turned.
                             style={{
                               color: C.muted,
-                              fontFamily: "Inter, sans-serif",
+                              fontFamily: FONT.body,
                               width: tRot ? nameWidth : "100%",
                               transform: tRot ? `rotate(${-tRot}deg)` : undefined,
                             }}
@@ -5941,7 +5927,7 @@ export default function SeatingPlanner({
                                   style={
                                     tallTag
                                       ? {
-                                          fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
+                                          fontFamily: guestId ? FONT.display : FONT.body,
                                           color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
                                           width: boxH - 8,
                                           // Without this, the span is a flex child of the (deliberately
@@ -5955,7 +5941,7 @@ export default function SeatingPlanner({
                                           transform: "rotate(-90deg)",
                                         }
                                       : {
-                                          fontFamily: guestId ? "Fraunces, serif" : "Inter, sans-serif",
+                                          fontFamily: guestId ? FONT.display : FONT.body,
                                           color: picked === guestId ? "#fff" : guestId ? C.ink : C.muted,
                                         }
                                   }

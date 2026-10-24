@@ -4,18 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Sparkles, AlertTriangle, Loader2, Check, RefreshCw, Wand2, FileImage, ExternalLink, ShoppingBag } from "lucide-react";
 import { POSTER_LAYOUTS, POSTER_PALETTES, POSTER_FONTS } from "@/lib/posterTemplates";
 import { getEtsyRecommendations, buildEtsyAffiliateUrl, etsySearchUrl, type EtsyCategory } from "@/lib/etsyRecommendations";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  goldSoft: "#E7D9B8",
-  wine: "#8C3B3B",
-  sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 interface Board {
   id: string;
@@ -309,10 +299,10 @@ export default function DecorPanel({
   return (
     <div className="max-w-2xl">
       <div className="mb-4">
-        <div className="text-xs tracking-[0.18em] uppercase font-semibold" style={{ color: C.gold, fontFamily: "Inter, sans-serif" }}>
+        <div className="text-xs tracking-[0.18em] uppercase font-semibold" style={{ color: C.gold, fontFamily: FONT.body }}>
           Step four
         </div>
-        <h2 className="text-2xl mt-1" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+        <h2 className="text-2xl mt-1" style={{ fontFamily: FONT.display, color: C.ink }}>
           Decor ideas
         </h2>
       </div>

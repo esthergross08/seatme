@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import NewEventButton from "./NewEventButton";
 import EventsList from "./EventsList";
+import { C, FONT } from "@/lib/theme";
 
 // Always fetch fresh from the database — this page is mutated a lot from the client
 // (create, rename, delete), and the router's client-side cache showing a stale list
@@ -9,15 +10,6 @@ import EventsList from "./EventsList";
 // that's easy to mistake for a real data bug.
 export const dynamic = "force-dynamic";
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  goldSoft: "#E7D9B8",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 export default async function EventsPage() {
   const supabase = await createClient();
@@ -35,7 +27,7 @@ export default async function EventsPage() {
   return (
     <div
       className="min-h-screen w-full px-6 py-10 sm:py-14"
-      style={{ backgroundColor: C.paper, fontFamily: "Inter, sans-serif" }}
+      style={{ backgroundColor: C.paper, fontFamily: FONT.body }}
     >
       <div className="max-w-2xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
@@ -46,7 +38,7 @@ export default async function EventsPage() {
             >
               Seating Planner
             </div>
-            <h1 className="text-3xl" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+            <h1 className="text-3xl" style={{ fontFamily: FONT.display, color: C.ink }}>
               My events
             </h1>
             <p className="text-xs mt-1" style={{ color: C.muted }}>

@@ -2,16 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  gold: "#A8823C",
-  wine: "#8C3B3B",
-  sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
@@ -41,7 +33,7 @@ export default function ResetPasswordPage() {
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: C.paper,
-        fontFamily: "Inter, sans-serif",
+        fontFamily: FONT.body,
         padding: "24px 16px",
         boxSizing: "border-box",
       }}
@@ -68,7 +60,7 @@ export default function ResetPasswordPage() {
         >
           Seating Planner
         </div>
-        <h1 style={{ fontFamily: "Georgia, serif", fontSize: 24, margin: "0 0 8px", color: C.ink }}>
+        <h1 style={{ fontFamily: FONT.display, fontSize: 24, margin: "0 0 8px", color: C.ink }}>
           Set a new password
         </h1>
 

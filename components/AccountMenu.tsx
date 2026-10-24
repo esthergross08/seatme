@@ -5,14 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { User, LayoutGrid, MapPin, LogOut, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { C } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 export default function AccountMenu({
   email,

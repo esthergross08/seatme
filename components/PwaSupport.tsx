@@ -2,19 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { C } from "@/lib/theme";
 
 // Registers the service worker and shows a small "Install SeatMe" banner on the
 // signed-in landing screens. Android/Chrome gets a real install button (via the
 // beforeinstallprompt event); iPhone/iPad get the Share → Add to Home Screen
 // instructions, since Safari has no install API.
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 // Only nudge people who are already using the product — never on the public
 // marketing pages, and never on guests' RSVP pages.

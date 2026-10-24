@@ -1,10 +1,6 @@
 import FeedbackForm from "@/components/FeedbackForm";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  gold: "#A8823C",
-  muted: "#736D5F",
-};
 
 export const metadata = {
   title: "About — SeatMe",
@@ -16,7 +12,7 @@ export default function AboutPage() {
       <div className="text-xs tracking-[0.2em] uppercase font-semibold mb-3" style={{ color: C.gold }}>
         About
       </div>
-      <h1 className="text-3xl mb-6" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+      <h1 className="text-3xl mb-6" style={{ fontFamily: FONT.display, color: C.ink }}>
         Why SeatMe exists
       </h1>
       <div className="text-sm leading-relaxed space-y-4" style={{ color: C.ink }}>

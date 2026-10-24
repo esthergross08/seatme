@@ -3,16 +3,8 @@
 import { useState, type FormEvent, type CSSProperties, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  paper: "#F7F3EA",
-  gold: "#A8823C",
-  wine: "#8C3B3B",
-  sage: "#54704F",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 function GoogleIcon() {
   return (
@@ -184,7 +176,7 @@ function LoginForm() {
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: C.paper,
-        fontFamily: "Inter, sans-serif",
+        fontFamily: FONT.body,
         padding: "24px 16px",
         boxSizing: "border-box",
       }}
@@ -213,7 +205,7 @@ function LoginForm() {
         </div>
         <h1
           style={{
-            fontFamily: "Georgia, serif",
+            fontFamily: FONT.display,
             fontSize: 24,
             margin: "0 0 8px",
             color: C.ink,

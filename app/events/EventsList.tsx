@@ -5,14 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Search, Trash2, Undo2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  card: "#FFFFFF",
-  gold: "#A8823C",
-  line: "#E4DCC9",
-  muted: "#736D5F",
-};
 
 interface EventRow {
   id: string;
@@ -146,12 +140,12 @@ export default function EventsList({ events, userId }: { events: EventRow[]; use
               className="block p-5 rounded-xl border transition-colors"
               style={{ borderColor: C.line, backgroundColor: C.card, textDecoration: "none", color: C.ink, paddingRight: ev.owner_id === userId ? 44 : undefined }}
             >
-              <div className="flex flex-wrap items-center gap-2 text-base font-medium" style={{ fontFamily: "Fraunces, serif" }}>
+              <div className="flex flex-wrap items-center gap-2 text-base font-medium" style={{ fontFamily: FONT.display }}>
                 {ev.name || "Untitled event"}
                 {ev.owner_id !== userId && (
                   <span
                     className="text-[11px] font-medium rounded-full px-2 py-0.5"
-                    style={{ color: C.gold, border: `1px solid ${C.gold}`, fontFamily: "Inter, sans-serif" }}
+                    style={{ color: C.gold, border: `1px solid ${C.gold}`, fontFamily: FONT.body }}
                   >
                     shared with you
                   </span>

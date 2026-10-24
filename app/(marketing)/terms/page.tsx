@@ -1,10 +1,6 @@
 import type { ReactNode } from "react";
+import { C, FONT } from "@/lib/theme";
 
-const C = {
-  ink: "#221F2B",
-  gold: "#A8823C",
-  muted: "#736D5F",
-};
 
 export const metadata = {
   title: "Terms of Service — SeatMe",
@@ -13,7 +9,7 @@ export const metadata = {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mb-8">
-      <h2 className="text-lg font-semibold mb-2" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+      <h2 className="text-lg font-semibold mb-2" style={{ fontFamily: FONT.display, color: C.ink }}>
         {title}
       </h2>
       <div className="text-sm leading-relaxed space-y-3" style={{ color: C.ink }}>
@@ -29,7 +25,7 @@ export default function TermsPage() {
       <div className="text-xs tracking-[0.2em] uppercase font-semibold mb-3" style={{ color: C.gold }}>
         Legal
       </div>
-      <h1 className="text-3xl mb-1" style={{ fontFamily: "Fraunces, serif", color: C.ink }}>
+      <h1 className="text-3xl mb-1" style={{ fontFamily: FONT.display, color: C.ink }}>
         Terms of Service
       </h1>
       <p className="text-xs mb-8" style={{ color: C.muted }}>
