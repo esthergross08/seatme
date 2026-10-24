@@ -2366,6 +2366,7 @@ export function usePlannerState({
   const capacityExceeded = maxCapacity !== "" && activeGuests.length > Number(maxCapacity);
 
   const PANE_ORDER = [
+    { id: "overview", label: "Overview" },
     { id: "setup", label: "Tables" },
     { id: "guests", label: "Guests & rules" },
     { id: "seating", label: "Seating map" },
