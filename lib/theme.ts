@@ -6,10 +6,11 @@
 // Tailwind classes like `bg-paper` / `text-ink` / `font-display` work too —
 // keep the two in sync when changing a value.
 //
-// Fonts are loaded once, by family name, in `app/layout.tsx`. They're loaded by
-// name (not via next/font) on purpose: the poster export in
-// `lib/posterTemplates.ts` renders through html2canvas and refers to fonts by
-// their real family names, which next/font would rename.
+// Fonts are self-hosted with next/font in `app/layout.tsx` (downloaded at
+// build time and served from SeatMe's own domain, so visitors' browsers never
+// contact Google). next/font gives each family an internal name, exposed as
+// the CSS variables below; FONT and the poster fonts refer to those
+// variables, with the real family name as a fallback.
 
 export const C = {
   /** Primary text, dark buttons. */
@@ -34,11 +35,9 @@ export const C = {
 
 export const FONT = {
   /** Headings and display text. */
-  display: "Fraunces, serif",
+  display: "var(--font-fraunces), Fraunces, serif",
   /** Body copy and UI. */
-  body: "Inter, sans-serif",
+  body: "var(--font-inter), Inter, sans-serif",
+  /** Poster export's "Elegant Script" option. */
+  script: "var(--font-playfair), 'Playfair Display', serif",
 };
-
-/** Google Fonts stylesheet for every family the app (and poster export) uses. */
-export const GOOGLE_FONTS_HREF =
-  "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,400;1,600&display=swap";

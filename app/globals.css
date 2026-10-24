@@ -15,9 +15,12 @@
   --color-sage: #54704F;
   --color-line: #E4DCC9;
   --color-muted: #736D5F;
+}
 
-  --font-display: Fraunces, serif;
-  --font-sans: Inter, sans-serif;
+/* Fonts come from next/font's variables (set on <html> in app/layout.tsx). */
+@theme inline {
+  --font-display: var(--font-fraunces), Fraunces, serif;
+  --font-sans: var(--font-inter), Inter, sans-serif;
 }
 
 /*

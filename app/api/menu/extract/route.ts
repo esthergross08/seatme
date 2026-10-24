@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import mammoth from "mammoth";
 import { createClient } from "@/lib/supabase/server";
 import { getEventRole } from "@/lib/eventAccess";
+import { checkUsage } from "@/lib/usageLimits";
 
 export const runtime = "nodejs";
 
@@ -30,10 +31,13 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
-  const { role } = await getEventRole(supabase, eventId);
+  const { role, userId } = await getEventRole(supabase, eventId);
   if (!role || role === "viewer") {
     return NextResponse.json({ error: "You don't have edit access to this event." }, { status: 403 });
   }
+
+  const usage = await checkUsage("analysis", userId ?? "unknown");
+  if (!usage.allowed) return NextResponse.json({ error: usage.message }, { status: 429 });
   if (!path.startsWith(`events/${eventId}/`)) {
     return NextResponse.json({ error: "You don't have access to that file." }, { status: 403 });
   }

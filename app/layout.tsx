@@ -1,8 +1,20 @@
 import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import PwaSupport from "@/components/PwaSupport";
-import { C, GOOGLE_FONTS_HREF } from "@/lib/theme";
+import { Fraunces, Inter, Playfair_Display } from "next/font/google";
+import { C } from "@/lib/theme";
 import "./globals.css";
+
+// Self-hosted brand fonts (see lib/theme.ts). Each exposes a CSS variable used
+// by FONT, the Tailwind theme and the poster export.
+const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces", display: "swap", axes: ["opsz"] });
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-playfair",
+  display: "swap",
+  style: ["normal", "italic"],
+});
 
 export const metadata: Metadata = {
   title: "SeatMe — Seating charts for any event",
@@ -31,13 +43,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <head>
-        {/* Brand fonts, loaded once for every route — see lib/theme.ts for why by name. */}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link rel="stylesheet" href={GOOGLE_FONTS_HREF} />
-      </head>
+    <html lang="en" className={`${fraunces.variable} ${inter.variable} ${playfair.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
         {children}
         <PwaSupport />

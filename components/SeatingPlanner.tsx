@@ -53,6 +53,7 @@ import {
   DEFAULT_POSTER_FONT,
 } from "@/lib/posterTemplates";
 import { C, FONT } from "@/lib/theme";
+import { SignedImg, SignedLink } from "@/components/StorageFile";
 
 // ---------- palette / tokens ----------
 
@@ -2331,9 +2332,6 @@ export default function SeatingPlanner({
     setFloorPlanSuggestion(null);
   }
 
-  function floorPlanPublicUrl(path: string) {
-    return createClient().storage.from("floor-plans").getPublicUrl(path).data.publicUrl;
-  }
 
   // Proposes a table setup from the uploaded floor plan via Claude vision, but doesn't
   // touch tableGroups until the user explicitly hits Apply — same propose-then-confirm
@@ -4068,19 +4066,20 @@ export default function SeatingPlanner({
               {floorPlan ? (
                 <div className="flex items-center gap-3 p-3 rounded-xl border" style={{ backgroundColor: C.card, borderColor: C.line }}>
                   {/\.(png|jpe?g|webp)$/i.test(floorPlan.path) ? (
-                    <img src={floorPlanPublicUrl(floorPlan.path)} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
+                    <SignedImg bucket="floor-plans" path={floorPlan.path} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
                   ) : (
                     <FileText size={22} style={{ color: C.gold }} className="shrink-0" />
                   )}
-                  <a
-                    href={floorPlanPublicUrl(floorPlan.path)}
+                  <SignedLink
+                    bucket="floor-plans"
+                    path={floorPlan.path}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm truncate flex-1"
                     style={{ color: C.ink }}
                   >
                     {floorPlan.name}
-                  </a>
+                  </SignedLink>
                   {!readOnly && (
                     <IconBtn danger title="Remove floor plan" onClick={handleFloorPlanRemove}>
                       <Trash2 size={15} />

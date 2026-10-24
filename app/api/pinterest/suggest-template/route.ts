@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getEventRole } from "@/lib/eventAccess";
 import { getValidAccessToken, listBoardPins, downloadPinImages } from "@/lib/pinterest";
 import { POSTER_LAYOUTS, POSTER_PALETTES, POSTER_FONTS, POSTER_LAYOUT_IDS, POSTER_PALETTE_IDS, POSTER_FONT_IDS } from "@/lib/posterTemplates";
+import { checkUsage } from "@/lib/usageLimits";
 
 export const runtime = "nodejs";
 
@@ -54,10 +55,13 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
-  const { role } = await getEventRole(supabase, eventId);
+  const { role, userId } = await getEventRole(supabase, eventId);
   if (!role || role === "viewer") {
     return NextResponse.json({ error: "You don't have edit access to this event." }, { status: 403 });
   }
+
+  const usage = await checkUsage("analysis", userId ?? "unknown");
+  if (!usage.allowed) return NextResponse.json({ error: usage.message }, { status: 429 });
 
   let pins;
   try {

@@ -1,3 +1,5 @@
+import { FONT } from "@/lib/theme";
+
 // Seating-chart poster styling for the "Seating chart poster" export.
 // Three independent choices — layout, color palette, typography — rather
 // than one bundled "template", so a couple can mix a clean layout with a
@@ -126,16 +128,16 @@ export const POSTER_FONTS: PosterFont[] = [
     id: "serif-classic",
     label: "Classic Serif",
     description: "Fraunces headings, understated and warm.",
-    headingFont: "Fraunces, serif",
-    bodyFont: "Inter, sans-serif",
+    headingFont: FONT.display,
+    bodyFont: FONT.body,
     headingWeight: 600,
   },
   {
     id: "serif-italic",
     label: "Elegant Script",
     description: "Playfair Display italic — editorial and romantic.",
-    headingFont: "'Playfair Display', serif",
-    bodyFont: "Inter, sans-serif",
+    headingFont: FONT.script,
+    bodyFont: FONT.body,
     headingStyle: "italic",
     headingWeight: 600,
   },
@@ -143,8 +145,8 @@ export const POSTER_FONTS: PosterFont[] = [
     id: "sans-modern",
     label: "Modern Sans",
     description: "Inter throughout — clean and contemporary.",
-    headingFont: "Inter, sans-serif",
-    bodyFont: "Inter, sans-serif",
+    headingFont: FONT.body,
+    bodyFont: FONT.body,
     headingWeight: 700,
   },
 ];

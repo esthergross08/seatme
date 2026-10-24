@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getEventRole } from "@/lib/eventAccess";
+import { checkUsage } from "@/lib/usageLimits";
 
 export const runtime = "nodejs";
 
@@ -49,6 +50,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "You don't have access to that file." }, { status: 403 });
     }
   }
+
+  const {
+    data: { user: caller },
+  } = await supabase.auth.getUser();
+  const usage = await checkUsage("analysis", caller?.id ?? "unknown");
+  if (!usage.allowed) return NextResponse.json({ error: usage.message }, { status: 429 });
 
   const { data: file, error: downloadError } = await supabase.storage.from("floor-plans").download(body.path);
   if (downloadError || !file) {

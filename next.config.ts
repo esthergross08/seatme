@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Brand photos are fetched from Unsplash server-side by the image optimizer
+  // and served from SeatMe's own domain (see lib/images.ts).
+  images: {
+    remotePatterns: [{ protocol: "https", hostname: "images.unsplash.com" }],
+  },
   // Short, clean links for social bios and posts. Each forwards to the homepage
   // with UTM tags, which the visit tracker in lib/supabase/middleware.ts records,
   // so traffic from each place can be counted. Temporary (307) redirects, so

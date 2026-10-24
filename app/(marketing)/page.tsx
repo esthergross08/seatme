@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Wand2, LayoutGrid, Users, Sparkles, MessageCircle, Upload, ClipboardCheck, FileImage } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { C, FONT } from "@/lib/theme";
+import { HERO_PHOTO_SRC, proxiedImageUrl } from "@/lib/images";
 
 
 const FEATURES = [
@@ -62,7 +63,7 @@ export default async function HomePage() {
         className="relative flex items-center justify-center text-center px-6 min-h-[560px] sm:min-h-[680px]"
         style={{
           backgroundImage:
-            "linear-gradient(to bottom, rgba(34,31,43,0.72), rgba(34,31,43,0.55) 45%, rgba(34,31,43,0.82)), url('https://images.unsplash.com/photo-1758810743028-6b8e150ec98f?w=2400&q=80&auto=format&fit=crop')",
+            `linear-gradient(to bottom, rgba(34,31,43,0.72), rgba(34,31,43,0.55) 45%, rgba(34,31,43,0.82)), url('${proxiedImageUrl(HERO_PHOTO_SRC, 2048)}')`,
           backgroundSize: "cover",
           backgroundPosition: "center",
         }}

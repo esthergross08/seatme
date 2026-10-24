@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { FileText, MapPin, Plus, Search, Sparkles, Trash2, Undo2, Upload, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { C, FONT } from "@/lib/theme";
+import { SignedImg, SignedLink } from "@/components/StorageFile";
 
 
 type TableShape = "round" | "oval" | "square" | "rectangle";
@@ -145,9 +146,6 @@ export default function LocationsList({
     setModalOpen(true);
   }
 
-  function floorPlanPublicUrl(path: string) {
-    return createClient().storage.from("floor-plans").getPublicUrl(path).data.publicUrl;
-  }
 
   // Uploads immediately on file select (independent of Save) using a random path under
   // this owner's own folder, decoupled from the location's own id — so it works the same
@@ -385,8 +383,9 @@ export default function LocationsList({
                     {summarizeTableGroups(loc.table_groups)}
                   </div>
                   {loc.floor_plan_path && (
-                    <a
-                      href={floorPlanPublicUrl(loc.floor_plan_path)}
+                    <SignedLink
+                      bucket="floor-plans"
+                      path={loc.floor_plan_path}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs mt-1 inline-flex items-center gap-1"
@@ -394,7 +393,7 @@ export default function LocationsList({
                     >
                       <FileText size={12} />
                       {loc.floor_plan_name || "Floor plan"}
-                    </a>
+                    </SignedLink>
                   )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
@@ -612,23 +611,23 @@ export default function LocationsList({
                 {floorPlanPath ? (
                   <div className="flex items-center gap-2 p-2.5 rounded-lg border" style={{ borderColor: C.line }}>
                     {isImagePath(floorPlanPath) ? (
-                      <img
-                        src={floorPlanPublicUrl(floorPlanPath)}
+                      <SignedImg bucket="floor-plans" path={floorPlanPath}
                         alt=""
                         className="w-10 h-10 rounded object-cover shrink-0"
                       />
                     ) : (
                       <FileText size={20} style={{ color: C.gold }} className="shrink-0" />
                     )}
-                    <a
-                      href={floorPlanPublicUrl(floorPlanPath)}
+                    <SignedLink
+                      bucket="floor-plans"
+                      path={floorPlanPath}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs truncate flex-1"
                       style={{ color: C.ink }}
                     >
                       {floorPlanName || "View floor plan"}
-                    </a>
+                    </SignedLink>
                     <button
                       type="button"
                       onClick={handleFloorPlanRemove}

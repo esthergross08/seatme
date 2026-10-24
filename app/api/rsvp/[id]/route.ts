@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { anonymousSubject, checkUsage } from "@/lib/usageLimits";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   } catch {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
+
+  const usage = await checkUsage("rsvp", anonymousSubject(request, eventId));
+  if (!usage.allowed) return NextResponse.json({ error: usage.message }, { status: 429 });
 
   let admin;
   try {

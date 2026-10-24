@@ -2,8 +2,14 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { AGENT_OPERATION_TYPES, type AgentOperation } from "@/lib/agentOperations";
 import { getEventRole } from "@/lib/eventAccess";
+import { checkUsage } from "@/lib/usageLimits";
 
 export const runtime = "nodejs";
+
+// Request size caps: the event state comes from the browser, so it's bounded
+// before it's forwarded to the model (a 600-guest event is well under this).
+const MAX_REQUEST_CHARS = 1_500_000;
+const MAX_MESSAGE_CHARS = 4000;
 
 interface TableGroupIn {
   id: string;
@@ -283,7 +289,11 @@ export async function POST(request: Request) {
 
   let body: { eventId?: string; message?: string; history?: ChatTurn[]; state?: EventState };
   try {
-    body = await request.json();
+    const raw = await request.text();
+    if (raw.length > MAX_REQUEST_CHARS) {
+      return NextResponse.json({ error: "This event is too large for the assistant to read in one go." }, { status: 413 });
+    }
+    body = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
@@ -291,6 +301,9 @@ export async function POST(request: Request) {
   const { eventId, message, history, state } = body;
   if (!eventId || !message || !state) {
     return NextResponse.json({ error: "Missing eventId, message, or state." }, { status: 400 });
+  }
+  if (typeof message !== "string" || message.length > MAX_MESSAGE_CHARS) {
+    return NextResponse.json({ error: "That message is too long — try something shorter." }, { status: 400 });
   }
 
   const supabase = await createClient();
@@ -300,6 +313,9 @@ export async function POST(request: Request) {
   if (role === "viewer") {
     return NextResponse.json({ error: "You have view-only access to this event." }, { status: 403 });
   }
+
+  const usage = await checkUsage("assistant", userId);
+  if (!usage.allowed) return NextResponse.json({ error: usage.message }, { status: 429 });
 
   const context = buildContext(state);
   const messages = [
@@ -332,7 +348,8 @@ export async function POST(request: Request) {
 
   if (!anthropicRes.ok) {
     const errText = await anthropicRes.text().catch(() => "");
-    return NextResponse.json({ error: `AI service error (${anthropicRes.status}). ${errText.slice(0, 200)}` }, { status: 502 });
+    console.error(`Anthropic error ${anthropicRes.status}: ${errText.slice(0, 500)}`);
+    return NextResponse.json({ error: `The AI service had a problem (${anthropicRes.status}). Try again in a moment.` }, { status: 502 });
   }
 
   const data = await anthropicRes.json();

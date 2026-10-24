@@ -6,9 +6,11 @@
 // credit is kept here anyway as good practice, and in case we add a credits
 // line later.
 //
-// Images are served straight from Unsplash's CDN (images.unsplash.com), which
-// resizes on the fly via the w/q/fit params — the same approach the homepage
-// hero already uses. To swap a photo, change it here only.
+// Photos are served through Next.js's image optimizer on SeatMe's own domain
+// (/_next/image), which fetches them from Unsplash server-side, resizes and
+// caches them. Visitors' browsers never contact Unsplash, so their IP
+// addresses aren't shared with it. Unsplash is allowed as a source in
+// next.config.ts (images.remotePatterns). To swap a photo, change it here only.
 
 export interface BrandPhoto {
   /** Base CDN URL without size params. */
@@ -43,7 +45,24 @@ export const PHOTOS = {
   },
 } satisfies Record<string, BrandPhoto>;
 
-/** CDN URL for a photo at a given display width (served as WebP/AVIF where supported). */
-export function photoUrl(photo: BrandPhoto, width: number): string {
-  return `${photo.src}?w=${width}&q=80&auto=format&fit=crop`;
+// Widths the optimizer accepts (Next.js defaults: deviceSizes + imageSizes).
+const OPTIMIZER_WIDTHS = [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
+
+/**
+ * A remote image URL routed through SeatMe's own image optimizer, at the
+ * smallest allowed width that covers `width`. Quality 75 is the only one
+ * Next.js 16 allows by default.
+ */
+export function proxiedImageUrl(src: string, width: number): string {
+  const w = OPTIMIZER_WIDTHS.find((x) => x >= width) ?? OPTIMIZER_WIDTHS[OPTIMIZER_WIDTHS.length - 1];
+  const source = `${src}${src.includes("?") ? "&" : "?"}auto=format&fit=crop&w=${w}`;
+  return `/_next/image?url=${encodeURIComponent(source)}&w=${w}&q=75`;
 }
+
+/** URL for a brand photo at a given display width. */
+export function photoUrl(photo: BrandPhoto, width: number): string {
+  return proxiedImageUrl(photo.src, width);
+}
+
+/** The homepage / welcome-page hero photo (predates lib/images.ts). */
+export const HERO_PHOTO_SRC = "https://images.unsplash.com/photo-1758810743028-6b8e150ec98f";
