@@ -30,14 +30,14 @@ export const C = {
   line: "#E4DCC9",
   /** Secondary text. */
   muted: "#736D5F",
-} as const;
+};
 
 export const FONT = {
   /** Headings and display text. */
   display: "Fraunces, serif",
   /** Body copy and UI. */
   body: "Inter, sans-serif",
-} as const;
+};
 
 /** Google Fonts stylesheet for every family the app (and poster export) uses. */
 export const GOOGLE_FONTS_HREF =
