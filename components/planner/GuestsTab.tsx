@@ -36,6 +36,7 @@ import {
   Pencil,
   MapPin,
   RotateCw,
+  ChevronDown,
   MessageCircle,
   LayoutDashboard,
 } from "lucide-react";
@@ -185,7 +186,10 @@ export default function GuestsTab() {
     addConstraintFor,
     addGroupConstraint,
     removeConstraintWithUndo,
+    setRsvpStatus,
   } = usePlanner();
+  // Which guest row is open for editing (one at a time keeps long lists tidy).
+  const [openGuestId, setOpenGuestId] = useState<string | null>(null);
 
   return (
     <div className="max-w-2xl">
@@ -440,28 +444,24 @@ export default function GuestsTab() {
         {guests.length > 5 && (
           <div className="mb-2 flex flex-col gap-2">
             <div className="flex items-center gap-3">
-              <div className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border" style={{ borderColor: C.line, backgroundColor: C.card }}>
-                <Search size={13} style={{ color: C.muted }} />
+              <div className="flex-1 flex items-center gap-1.5 px-3 h-11 rounded-lg border" style={{ borderColor: C.line, backgroundColor: C.card }}>
+                <Search size={14} style={{ color: C.muted }} />
                 <input
                   value={guestSearch}
                   onChange={(e) => setGuestSearch(e.target.value)}
                   placeholder="Search guests…"
                   aria-label="Search guests"
-                  className="flex-1 bg-transparent outline-none text-xs"
+                  className="flex-1 bg-transparent outline-none text-sm"
                   style={{ color: C.ink }}
                 />
               </div>
-              <label className="flex items-center gap-1.5 text-xs cursor-pointer shrink-0" style={{ color: C.muted }}>
-                <input type="checkbox" checked={compactGuestRows} onChange={(e) => setCompactGuestRows(e.target.checked)} />
-                Compact view
-              </label>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {(["all", "attending", "pending", "declined"] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setRsvpFilter(f)}
-                  className="text-[10px] font-medium px-2.5 py-1 rounded-full border"
+                  className="text-xs font-medium px-3 py-1.5 rounded-full border"
                   style={{
                     borderColor: rsvpFilter === f ? C.ink : C.line,
                     backgroundColor: rsvpFilter === f ? C.ink : "transparent",
@@ -485,205 +485,143 @@ export default function GuestsTab() {
           {visibleGuests.map((g) => {
             const avatarColor = g.groupIds?.map((gid) => groupById[gid]?.color).find(Boolean) ?? null;
             const contextLine = guestContextLine(g);
+            const seatLabel = seatOfGuest[g.id]
+              ? `Seated · ${tableById[seatsById[seatOfGuest[g.id]]?.tableId ?? ""]?.label ?? ""}`
+              : g.rsvpStatus === "declined"
+              ? "Not seated (declined)"
+              : "Unseated";
+            const tags = constraintTagsByGuestId[g.id] ?? [];
+            const otherGuests = guests.filter((x) => x.id !== g.id);
+            const canAddRule = !readOnly && (otherGuests.length > 0 || groups.length > 0);
+            const open = openGuestId === g.id;
+            const status = g.rsvpStatus ?? "pending";
+            const statusColor = status === "declined" ? C.wine : status === "attending" ? C.sage : C.muted;
+            const fieldLabel = "text-[11px] font-semibold uppercase tracking-wide";
             return (
-            <div key={g.id} id={`guest-row-${g.id}`} className="px-3 py-2 border-b last:border-b-0 scroll-mt-24" style={{ borderColor: C.line }}>
-              <div className="flex items-center gap-2">
+            <div key={g.id} id={`guest-row-${g.id}`} className="border-b last:border-b-0 scroll-mt-24" style={{ borderColor: C.line }}>
+              {/* Summary row: tap to open the guest's details */}
+              <button
+                type="button"
+                onClick={() => setOpenGuestId(open ? null : g.id)}
+                aria-expanded={open}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left min-h-[56px]"
+                style={{ backgroundColor: open ? C.paper : "transparent" }}
+              >
                 <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold"
+                  className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-[11px] font-bold"
                   style={{ backgroundColor: avatarColor ?? C.goldSoft, color: avatarColor ? "#fff" : C.gold }}
                   aria-hidden
                 >
                   {guestInitials(g.name || "?")}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <input
-                    value={g.name}
-                    onChange={(e) => renameGuest(g.id, e.target.value)}
-                    disabled={readOnly}
-                    aria-label="Guest name"
-                    className="w-full bg-transparent outline-none text-sm"
-                    style={{ color: C.ink, fontFamily: FONT.display }}
-                  />
-                  {compactGuestRows && contextLine && (
-                    <div className="text-[10px] truncate" style={{ color: C.muted }}>
-                      {contextLine}
-                    </div>
-                  )}
-                </div>
-                <span className="text-[10px] shrink-0 whitespace-nowrap" style={{ color: seatOfGuest[g.id] ? C.sage : C.muted }}>
-                  {seatOfGuest[g.id]
-                    ? `Seated · ${tableById[seatsById[seatOfGuest[g.id]]?.tableId ?? ""]?.label ?? ""}`
-                    : "Unseated"}
-                </span>
-                <IconBtn danger title="Remove guest" onClick={() => removeGuestWithUndo(g.id)} disabled={readOnly}>
-                  <X size={14} />
-                </IconBtn>
-              </div>
-              {groups.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {groups.map((gr) => {
-                    const active = g.groupIds?.includes(gr.id);
-                    return (
-                      <button
-                        key={gr.id}
-                        onClick={() => toggleGuestGroup(g.id, gr.id)}
-                        disabled={readOnly}
-                        className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium disabled:opacity-60"
-                        style={{
-                          borderColor: gr.color,
-                          backgroundColor: active ? gr.color : "transparent",
-                          color: active ? "#fff" : gr.color,
-                        }}
-                      >
-                        {gr.name}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-              {(() => {
-                const tags = constraintTagsByGuestId[g.id] ?? [];
-                const otherGuests = guests.filter((x) => x.id !== g.id);
-                const canAddRule = !readOnly && (otherGuests.length > 0 || groups.length > 0);
-                if (tags.length === 0 && !canAddRule) return null;
-                return (
-                  <div className="flex flex-wrap items-center gap-1 mt-1">
-                    {tags.map((t) => (
-                      <span
-                        key={t.constraintId}
-                        className="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-1 py-0.5 rounded-full font-medium"
-                        style={{
-                          backgroundColor: t.type === "must" ? "#EEF2EA" : "#F3E4E4",
-                          color: t.type === "must" ? C.sage : C.wine,
-                        }}
-                      >
-                        {RULE_SHORT[t.type]} {t.label}
-                        {!readOnly && (
-                          <button
-                            onClick={() => removeConstraintWithUndo(t.constraintId)}
-                            aria-label={`Remove rule: ${RULE_SHORT[t.type]} ${t.label}`}
-                            className="rounded-full hover:opacity-70"
-                          >
-                            <X size={9} />
-                          </button>
-                        )}
-                      </span>
-                    ))}
-                    {canAddRule && addRuleForGuestId !== g.id && (
-                      <button
-                        onClick={() => {
-                          setAddRuleForGuestId(g.id);
-                          setAddRuleType("must");
-                          const firstTargetType = otherGuests.length > 0 ? "guest" : "group";
-                          setAddRuleTargetType(firstTargetType);
-                          setAddRuleTargetId((firstTargetType === "guest" ? otherGuests[0]?.id : groups[0]?.id) ?? "");
-                        }}
-                        className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border font-medium"
-                        style={{ borderColor: C.gold, color: C.gold }}
-                      >
-                        <Plus size={9} /> Rule
-                      </button>
-                    )}
+                  <div className="text-sm truncate" style={{ color: C.ink, fontFamily: FONT.display }}>
+                    {g.name || "Unnamed guest"}
                   </div>
-                );
-              })()}
-              {addRuleForGuestId === g.id && (
-                <div
-                  className="flex flex-wrap items-center gap-1 mt-1 p-1.5 rounded-lg border"
-                  style={{ borderColor: C.line, backgroundColor: C.paper }}
-                >
-                  <select
-                    value={addRuleType}
-                    onChange={(e) => setAddRuleType(e.target.value as RuleType)}
-                    className="text-[10px] font-semibold rounded-md px-1.5 py-1"
-                    style={{
-                      color: addRuleType === "must" ? C.sage : C.wine,
-                      backgroundColor: addRuleType === "must" ? "#EEF2EA" : "#F3E4E4",
-                    }}
-                  >
-                    <option value="must">must sit with</option>
-                    <option value="cannot">not at the same table as</option>
-                    <option value="notNextTo">not next to</option>
-                  </select>
-                  <select
-                    value={addRuleTargetType}
-                    onChange={(e) => {
-                      const newType = e.target.value as "guest" | "group";
-                      setAddRuleTargetType(newType);
-                      const opts = newType === "group" ? groups : guests.filter((x) => x.id !== g.id);
-                      setAddRuleTargetId(opts[0]?.id ?? "");
-                    }}
-                    className="text-[10px] rounded-md px-1 py-1 border"
-                    style={{ borderColor: C.line, color: C.muted }}
-                  >
-                    <option value="guest">Person</option>
-                    <option value="group">Group</option>
-                  </select>
-                  <select
-                    value={addRuleTargetId}
-                    onChange={(e) => setAddRuleTargetId(e.target.value)}
-                    className="flex-1 min-w-0 bg-transparent outline-none text-xs"
-                  >
-                    {(addRuleTargetType === "group" ? groups : guests.filter((x) => x.id !== g.id)).map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}
-                      </option>
-                    ))}
-                  </select>
-                  <IconBtn
-                    title="Add rule"
-                    onClick={() => {
-                      addConstraintFor(g.id, addRuleType, addRuleTargetType, addRuleTargetId);
-                      setAddRuleForGuestId(null);
-                    }}
-                  >
-                    <Check size={13} />
-                  </IconBtn>
-                  <IconBtn title="Cancel" onClick={() => setAddRuleForGuestId(null)}>
-                    <X size={13} />
-                  </IconBtn>
+                  <div className="text-[11px] truncate" style={{ color: C.muted }}>
+                    <span style={{ color: seatOfGuest[g.id] ? C.sage : C.muted }}>{seatLabel}</span>
+                    {contextLine && contextLine !== "RSVP pending" && contextLine !== "Declined" ? ` · ${contextLine}` : ""}
+                  </div>
                 </div>
-              )}
-              {!compactGuestRows && (
-                <>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <StickyNote size={11} className="shrink-0" style={{ color: g.note ? C.gold : C.muted }} />
+                {tags.length > 0 && (
+                  <span
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0"
+                    style={{ backgroundColor: C.goldSoft, color: C.ink }}
+                    title={`${tags.length} seating ${tags.length === 1 ? "rule" : "rules"}`}
+                  >
+                    {tags.length} {tags.length === 1 ? "rule" : "rules"}
+                  </span>
+                )}
+                <span
+                  className="text-[10px] px-2 py-0.5 rounded-full border font-medium shrink-0"
+                  style={{ borderColor: status === "pending" ? C.line : statusColor, color: statusColor }}
+                >
+                  {status === "declined" ? "Declined" : status === "attending" ? "Attending" : "Pending"}
+                </span>
+                <ChevronDown
+                  size={16}
+                  className="shrink-0 transition-transform"
+                  style={{ color: C.muted, transform: open ? "rotate(180deg)" : "none" }}
+                />
+              </button>
+
+              {/* Details */}
+              {open && (
+                <div className="px-3 pb-3 pt-1 flex flex-col gap-3" style={{ backgroundColor: C.paper }}>
+                  <label className="flex flex-col gap-1">
+                    <span className={fieldLabel} style={{ color: C.muted }}>
+                      Name
+                    </span>
+                    <input
+                      value={g.name}
+                      onChange={(e) => renameGuest(g.id, e.target.value)}
+                      disabled={readOnly}
+                      aria-label="Guest name"
+                      className="h-11 px-3 rounded-lg border text-sm outline-none"
+                      style={{ borderColor: C.line, color: C.ink, backgroundColor: C.card, fontFamily: FONT.display }}
+                    />
+                  </label>
+
+                  <div className="flex flex-col gap-1">
+                    <span className={fieldLabel} style={{ color: C.muted }}>
+                      RSVP
+                    </span>
+                    <div className="grid grid-cols-3 gap-1.5" role="group" aria-label="RSVP status">
+                      {(["attending", "pending", "declined"] as const).map((st) => {
+                        const selected = status === st;
+                        const col = st === "declined" ? C.wine : st === "attending" ? C.sage : C.ink;
+                        return (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => setRsvpStatus(g.id, st)}
+                            disabled={readOnly}
+                            aria-pressed={selected}
+                            className="h-10 rounded-lg border text-xs font-semibold disabled:opacity-60"
+                            style={{
+                              borderColor: selected ? col : C.line,
+                              backgroundColor: selected ? col : C.card,
+                              color: selected ? "#fff" : col,
+                            }}
+                          >
+                            {st === "attending" ? "Attending" : st === "pending" ? "Pending" : "Declined"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <label className="flex flex-col gap-1">
+                    <span className={fieldLabel} style={{ color: C.muted }}>
+                      Meal
+                    </span>
+                    <input
+                      value={g.mealChoice ?? ""}
+                      onChange={(e) => updateGuestMealChoice(g.id, e.target.value)}
+                      disabled={readOnly}
+                      placeholder="Meal choice"
+                      className="h-11 px-3 rounded-lg border text-sm outline-none"
+                      style={{ borderColor: C.line, color: C.ink, backgroundColor: C.card }}
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className={`${fieldLabel} inline-flex items-center gap-1`} style={{ color: C.muted }}>
+                      <StickyNote size={11} style={{ color: g.note ? C.gold : C.muted }} /> Note · only you and your collaborators see this
+                    </span>
                     <input
                       value={g.note ?? ""}
                       onChange={(e) => updateGuestNote(g.id, e.target.value)}
                       disabled={readOnly}
                       placeholder="Dietary need, high chair, wheelchair access…"
-                      className="flex-1 bg-transparent outline-none text-[11px]"
-                      style={{ color: C.muted }}
+                      className="h-11 px-3 rounded-lg border text-sm outline-none"
+                      style={{ borderColor: C.line, color: C.ink, backgroundColor: C.card }}
                     />
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <button
-                      onClick={() => cycleRsvpStatus(g.id)}
-                      disabled={readOnly}
-                      title="Click to change RSVP status"
-                      className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium shrink-0 disabled:opacity-60"
-                      style={{
-                        borderColor:
-                          g.rsvpStatus === "declined" ? C.wine : g.rsvpStatus === "attending" ? C.sage : C.line,
-                        color:
-                          g.rsvpStatus === "declined" ? C.wine : g.rsvpStatus === "attending" ? C.sage : C.muted,
-                      }}
-                    >
-                      {g.rsvpStatus === "declined" ? "Declined" : g.rsvpStatus === "attending" ? "Attending" : "Pending"}
-                    </button>
-                    <input
-                      value={g.mealChoice ?? ""}
-                      onChange={(e) => updateGuestMealChoice(g.id, e.target.value)}
-                      disabled={readOnly}
-                      placeholder="Meal choice…"
-                      className="flex-1 bg-transparent outline-none text-[11px]"
-                      style={{ color: C.muted }}
-                    />
-                  </div>
+                  </label>
+
                   {g.rsvpComment && (
-                    <div className="flex items-start gap-1.5 mt-1 text-[11px]" style={{ color: C.muted }}>
-                      <MessageCircle size={11} className="shrink-0 mt-[2px]" style={{ color: C.sage }} />
+                    <div className="flex items-start gap-1.5 text-xs" style={{ color: C.muted }}>
+                      <MessageCircle size={12} className="shrink-0 mt-[2px]" style={{ color: C.sage }} />
                       <span>
                         <span className="font-medium" style={{ color: C.sage }}>
                           From their RSVP:
@@ -692,7 +630,170 @@ export default function GuestsTab() {
                       </span>
                     </div>
                   )}
-                </>
+
+                  {groups.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className={fieldLabel} style={{ color: C.muted }}>
+                        Groups
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {groups.map((gr) => {
+                          const active = g.groupIds?.includes(gr.id);
+                          return (
+                            <button
+                              key={gr.id}
+                              type="button"
+                              onClick={() => toggleGuestGroup(g.id, gr.id)}
+                              disabled={readOnly}
+                              aria-pressed={active}
+                              className="text-xs px-3 py-1.5 rounded-full border font-medium disabled:opacity-60"
+                              style={{
+                                borderColor: gr.color,
+                                backgroundColor: active ? gr.color : C.card,
+                                color: active ? "#fff" : gr.color,
+                              }}
+                            >
+                              {gr.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {(tags.length > 0 || canAddRule) && (
+                    <div className="flex flex-col gap-1">
+                      <span className={fieldLabel} style={{ color: C.muted }}>
+                        Seating rules
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {tags.map((t) => (
+                          <span
+                            key={t.constraintId}
+                            className="inline-flex items-center gap-1 text-xs pl-2.5 pr-1 py-1 rounded-full font-medium"
+                            style={{
+                              backgroundColor: t.type === "must" ? "#EEF2EA" : "#F3E4E4",
+                              color: t.type === "must" ? C.sage : C.wine,
+                            }}
+                          >
+                            {RULE_SHORT[t.type]} {t.label}
+                            {!readOnly && (
+                              <button
+                                type="button"
+                                onClick={() => removeConstraintWithUndo(t.constraintId)}
+                                aria-label={`Remove rule: ${RULE_SHORT[t.type]} ${t.label}`}
+                                className="w-6 h-6 rounded-full flex items-center justify-center hover:opacity-70"
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                        {canAddRule && addRuleForGuestId !== g.id && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAddRuleForGuestId(g.id);
+                              setAddRuleType("must");
+                              const firstTargetType = otherGuests.length > 0 ? "guest" : "group";
+                              setAddRuleTargetType(firstTargetType);
+                              setAddRuleTargetId((firstTargetType === "guest" ? otherGuests[0]?.id : groups[0]?.id) ?? "");
+                            }}
+                            className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-full border font-medium"
+                            style={{ borderColor: C.gold, color: C.gold, backgroundColor: C.card }}
+                          >
+                            <Plus size={12} /> Add rule
+                          </button>
+                        )}
+                      </div>
+                      {addRuleForGuestId === g.id && (
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-1 p-2 rounded-lg border" style={{ borderColor: C.line, backgroundColor: C.card }}>
+                          <select
+                            value={addRuleType}
+                            onChange={(e) => setAddRuleType(e.target.value as RuleType)}
+                            aria-label="Rule type"
+                            className="h-10 text-xs font-semibold rounded-md px-2"
+                            style={{
+                              color: addRuleType === "must" ? C.sage : C.wine,
+                              backgroundColor: addRuleType === "must" ? "#EEF2EA" : "#F3E4E4",
+                            }}
+                          >
+                            <option value="must">must sit with</option>
+                            <option value="cannot">not at the same table as</option>
+                            <option value="notNextTo">not next to</option>
+                          </select>
+                          <div className="flex gap-2 flex-1 min-w-0">
+                            <select
+                              value={addRuleTargetType}
+                              onChange={(e) => {
+                                const newType = e.target.value as "guest" | "group";
+                                setAddRuleTargetType(newType);
+                                const opts = newType === "group" ? groups : guests.filter((x) => x.id !== g.id);
+                                setAddRuleTargetId(opts[0]?.id ?? "");
+                              }}
+                              aria-label="Rule applies to a person or a group"
+                              className="h-10 text-xs rounded-md px-2 border"
+                              style={{ borderColor: C.line, color: C.muted }}
+                            >
+                              <option value="guest">Person</option>
+                              <option value="group">Group</option>
+                            </select>
+                            <select
+                              value={addRuleTargetId}
+                              onChange={(e) => setAddRuleTargetId(e.target.value)}
+                              aria-label="Who the rule is with"
+                              className="h-10 flex-1 min-w-0 text-sm rounded-md px-2 border"
+                              style={{ borderColor: C.line, color: C.ink }}
+                            >
+                              {(addRuleTargetType === "group" ? groups : guests.filter((x) => x.id !== g.id)).map((o) => (
+                                <option key={o.id} value={o.id}>
+                                  {o.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setAddRuleForGuestId(null)}
+                              className="h-10 px-3 text-xs font-medium rounded-md"
+                              style={{ color: C.muted }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                addConstraintFor(g.id, addRuleType, addRuleTargetType, addRuleTargetId);
+                                setAddRuleForGuestId(null);
+                              }}
+                              className="h-10 px-4 text-xs font-semibold rounded-md"
+                              style={{ backgroundColor: C.gold, color: "#fff" }}
+                            >
+                              Add rule
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!readOnly && (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenGuestId(null);
+                          removeGuestWithUndo(g.id);
+                        }}
+                        className="inline-flex items-center gap-1.5 h-10 px-3 text-xs font-semibold rounded-lg"
+                        style={{ color: C.wine }}
+                      >
+                        <Trash2 size={14} /> Remove guest
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             );

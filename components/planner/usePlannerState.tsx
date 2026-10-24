@@ -1177,6 +1177,22 @@ export function usePlannerState({
       });
     }
   };
+  // Set a guest's RSVP status directly (the guest row's three buttons).
+  // Declining frees their seat, same as cycleRsvpStatus.
+  const setRsvpStatus = (id: string, status: RsvpStatus) => {
+    if (readOnly) return;
+    const wasDeclined = guests.find((x) => x.id === id)?.rsvpStatus === "declined";
+    setGuests((g) => g.map((x) => (x.id === id ? { ...x, rsvpStatus: status } : x)));
+    if (status === "declined" && !wasDeclined) {
+      setSeatAssignment((prev) => {
+        const seatId = Object.entries(prev).find(([, guestId]) => guestId === id)?.[0];
+        if (!seatId) return prev;
+        const next = { ...prev };
+        delete next[seatId];
+        return next;
+      });
+    }
+  };
   const removeGuest = (id: string) => {
     if (readOnly) return;
     setGuests((g) => g.filter((x) => x.id !== id));
@@ -2650,6 +2666,7 @@ export function usePlannerState({
     updateGuestNote,
     updateGuestMealChoice,
     cycleRsvpStatus,
+    setRsvpStatus,
     removeGuest,
     removeGuestWithUndo,
     toggleGuestGroup,
