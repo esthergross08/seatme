@@ -366,8 +366,8 @@ export default function TablesTab() {
       >
         {seatsShort ? <AlertTriangle size={16} /> : <Check size={16} />}
         {seatsShort
-          ? `You have ${guests.length} guests but only ${totalSeats} seats. Add more tables before generating a plan.`
-          : `${totalSeats} seats configured for ${guests.length} guests — ${totalSeats - guests.length} spare.`}
+          ? `You have ${activeGuests.length} guests coming (declined not counted) but only ${totalSeats} seats. Add more tables before generating a plan.`
+          : `${totalSeats} seats for ${activeGuests.length} guests (declined not counted) — ${totalSeats - activeGuests.length} spare.`}
       </div>
 
       {maxCapacity !== "" && (

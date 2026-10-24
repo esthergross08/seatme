@@ -279,7 +279,7 @@ export default function SeatingTab() {
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <button
           onClick={() => runSolver()}
-          disabled={readOnly || seatsShort || solving || guests.length === 0}
+          disabled={readOnly || seatsShort || solving || activeGuests.length === 0}
           className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap disabled:opacity-40"
           style={{ backgroundColor: C.gold, color: "#fff" }}
         >
@@ -289,7 +289,7 @@ export default function SeatingTab() {
         {seatedCount > 0 && (
           <button
             onClick={() => runSolver(true)}
-            disabled={readOnly || seatsShort || solving || guests.length === 0}
+            disabled={readOnly || seatsShort || solving || activeGuests.length === 0}
             title="Try a different arrangement from scratch, ignoring 'keep close to current plan'"
             className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border whitespace-nowrap disabled:opacity-40"
             style={{ borderColor: C.line, color: C.ink }}

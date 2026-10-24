@@ -1694,22 +1694,24 @@ export function usePlannerState({
   // re-solve from scratch regardless of the "keep close to current plan"
   // checkbox, for when a plan already exists and the ask is specifically
   // "give me a different arrangement," not "regenerate respecting my setting."
+  // Declined guests are never seated: they're left out of generation and of
+  // the seat count (declining already frees a guest's seat elsewhere).
   function runSolver(forceReshuffle = false) {
     if (readOnly) return;
-    if (totalSeats < guests.length) return;
+    if (totalSeats < activeGuests.length) return;
     setSolving(true);
     setTimeout(() => {
       let poolTables = tables;
       let chosenIds = tables.map((t) => t.id);
       if (fillMode === "consolidate") {
-        chosenIds = pickConsolidatedTables(tables, guests.length);
+        chosenIds = pickConsolidatedTables(tables, activeGuests.length);
         poolTables = tables.filter((t) => chosenIds.includes(t.id));
       }
       const poolSeats = buildSeats(poolTables);
       const poolSeatsById = Object.fromEntries(poolSeats.map((s) => [s.id, s]));
       const result = solveSeating(
         poolSeats,
-        guests.map((g) => g.id),
+        activeGuests.map((g) => g.id),
         flatPairs,
         poolSeatsById,
         fillMode,
@@ -2268,29 +2270,31 @@ export function usePlannerState({
             const workingTables = buildTables(workingTableGroups).filter((t) => !deletedTableSet.has(t.id));
             let poolTables = workingTables;
             // Only pins for guests still on the list, whose seats still exist.
+            // Declined guests are left out, same as Auto-generate.
+            const activeWorkingGuests = workingGuests.filter((g) => g.rsvpStatus !== "declined");
             const pins: Record<string, string[]> = {};
-            const workingGuestIds = new Set(workingGuests.map((g) => g.id));
+            const workingGuestIds = new Set(activeWorkingGuests.map((g) => g.id));
             for (const [gid, sids] of Object.entries(pinnedSeatsOfGuest)) {
               if (workingGuestIds.has(gid)) pins[gid] = sids;
             }
             const pinnedTableIds = new Set(Object.values(pins).flatMap((sids) => sids.map((sid) => sid.split("#")[0])));
             if (fillMode === "consolidate") {
-              const chosenIds = pickConsolidatedTables(workingTables, workingGuests.length);
+              const chosenIds = pickConsolidatedTables(workingTables, activeWorkingGuests.length);
               // A table someone was just pinned to always stays in play.
               poolTables = workingTables.filter((t) => chosenIds.includes(t.id) || pinnedTableIds.has(t.id));
             }
             const poolSeats = buildSeats(poolTables);
-            if (poolSeats.length < workingGuests.length) throw new Error("Not enough seats for all guests.");
+            if (poolSeats.length < activeWorkingGuests.length) throw new Error("Not enough seats for all guests.");
             const poolSeatsById = Object.fromEntries(poolSeats.map((s) => [s.id, s]));
             const workingGuestsByGroupId: Record<string, string[]> = {};
-            workingGuests.forEach((g) =>
+            activeWorkingGuests.forEach((g) =>
               (g.groupIds || []).forEach((gid) => (workingGuestsByGroupId[gid] = workingGuestsByGroupId[gid] || []).push(g.id))
             );
             const workingFlatPairs = expandAllConstraints(workingConstraints, workingGuestsByGroupId);
             const workingAutoGroupPairs = buildAutoGroupPairs(workingGroups, workingGuestsByGroupId);
             workingSeatAssignment = solveSeating(
               poolSeats,
-              workingGuests.map((g) => g.id),
+              activeWorkingGuests.map((g) => g.id),
               workingFlatPairs,
               poolSeatsById,
               fillMode,
@@ -2362,7 +2366,7 @@ export function usePlannerState({
     return results;
   }
 
-  const seatsShort = totalSeats < guests.length;
+  const seatsShort = totalSeats < activeGuests.length;
   const capacityExceeded = maxCapacity !== "" && activeGuests.length > Number(maxCapacity);
 
   const PANE_ORDER = [
