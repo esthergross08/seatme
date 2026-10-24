@@ -336,3 +336,64 @@ export function SettingRow({
     </label>
   );
 }
+
+// A number field with − / + buttons, sized for touch (44px tall). Typing still
+// works; the buttons save phone users from the numeric keyboard.
+export function Stepper({
+  value,
+  onChange,
+  onBlur,
+  min = 0,
+  max,
+  disabled,
+  label,
+}: {
+  value: number | "";
+  onChange: (v: number | "") => void;
+  onBlur?: () => void;
+  min?: number;
+  max?: number;
+  disabled?: boolean;
+  label: string;
+}) {
+  const n = value === "" ? min : value;
+  const clamp = (v: number) => Math.max(min, max === undefined ? v : Math.min(max, v));
+  const btn = "w-9 h-11 flex items-center justify-center text-lg leading-none disabled:opacity-30";
+  return (
+    <div className="flex items-center rounded-lg border overflow-hidden" style={{ borderColor: C.line, backgroundColor: C.card }}>
+      <button
+        type="button"
+        aria-label={`Decrease ${label}`}
+        disabled={disabled || n <= min}
+        onClick={() => onChange(clamp(n - 1))}
+        className={btn}
+        style={{ color: C.gold }}
+      >
+        −
+      </button>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        value={value}
+        disabled={disabled}
+        aria-label={label}
+        onChange={(e) => onChange(e.target.value === "" ? "" : clamp(Number(e.target.value)))}
+        onBlur={onBlur}
+        className="w-10 h-11 text-center text-sm bg-transparent outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        style={{ color: C.ink }}
+      />
+      <button
+        type="button"
+        aria-label={`Increase ${label}`}
+        disabled={disabled || (max !== undefined && n >= max)}
+        onClick={() => onChange(clamp(n + 1))}
+        className={btn}
+        style={{ color: C.gold }}
+      >
+        +
+      </button>
+    </div>
+  );
+}

@@ -121,7 +121,7 @@ import {
   parseGuestRows,
 } from "@/lib/planner/guestImport";
 import { usePlanner } from "@/components/planner/usePlannerState";
-import { IconBtn, SectionTitle, MapMenuButton, FixtureSizeEditor, SettingRow } from "@/components/planner/ui";
+import { IconBtn, SectionTitle, MapMenuButton, FixtureSizeEditor, SettingRow, Stepper } from "@/components/planner/ui";
 
 export default function TablesTab() {
   const {
@@ -164,112 +164,122 @@ export default function TablesTab() {
       </p>
 
       <div className="space-y-3">
-        {tableGroups.map((g) => (
-          <div key={g.id} className="flex flex-wrap items-center gap-3 p-3 rounded-xl border" style={{ backgroundColor: C.card, borderColor: C.line }}>
-            <input
-              value={g.label}
-              onChange={(e) => updateTableGroup(g.id, { label: e.target.value })}
-              disabled={readOnly}
-              className="w-full sm:w-auto sm:flex-1 bg-transparent outline-none text-sm font-medium"
-              style={{ color: C.ink }}
-              placeholder="Table type name"
-            />
-            <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }} title="Number of tables of this type">
-              <Table2 size={13} style={{ color: C.gold }} />
+        {tableGroups.map((g) => {
+          const isRect = g.shape === "square" || g.shape === "rectangle";
+          const count = Number(g.count) || 0;
+          const seatsEach = Number(g.capacity) || 0;
+          const fieldLabel = "text-[11px] font-semibold uppercase tracking-wide";
+          return (
+          <div key={g.id} className="p-3 sm:p-4 rounded-xl border" style={{ backgroundColor: C.card, borderColor: C.line }}>
+            {/* Name + remove */}
+            <div className="flex items-center gap-2 mb-3">
               <input
-                type="number"
-                min={0}
-                value={g.count}
+                value={g.label}
+                onChange={(e) => updateTableGroup(g.id, { label: e.target.value })}
                 disabled={readOnly}
-                onChange={(e) => updateTableGroup(g.id, { count: e.target.value === "" ? "" : Number(e.target.value) })}
-                onBlur={() => {
-                  if (g.count === "") updateTableGroup(g.id, { count: 0 });
-                }}
-                aria-label="Number of tables of this type"
-                className="w-14 px-2 py-1 rounded-md border text-sm text-center"
-                style={{ borderColor: C.line }}
+                className="flex-1 min-w-0 bg-transparent outline-none text-base font-medium py-1"
+                style={{ color: C.ink }}
+                placeholder="Table type name"
+                aria-label="Table type name"
               />
-              tables
-            </label>
-            <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }} title="Seats per table">
-              <Users size={13} style={{ color: C.gold }} />
-              <input
-                type="number"
-                min={0}
-                value={g.capacity}
-                disabled={readOnly}
-                onChange={(e) => updateTableGroup(g.id, { capacity: e.target.value === "" ? "" : Number(e.target.value) })}
-                onBlur={() => {
-                  if (g.capacity === "") updateTableGroup(g.id, { capacity: 0 });
-                }}
-                aria-label="Seats per table"
-                className="w-14 px-2 py-1 rounded-md border text-sm text-center"
-                style={{ borderColor: C.line }}
-              />
-              seats each
-            </label>
-            <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }}>
-              Shape
-              <select
-                value={g.shape || "round"}
-                disabled={readOnly}
-                onChange={(e) => updateTableGroup(g.id, { shape: e.target.value as TableShape })}
-                aria-label="Table shape"
-                className="px-2 py-1 rounded-md border text-sm"
-                style={{ borderColor: C.line, color: C.ink }}
-              >
-                <option value="round">Round</option>
-                <option value="oval">Oval</option>
-                <option value="square">Square</option>
-                <option value="rectangle">Rectangle</option>
-              </select>
-            </label>
-            {(g.shape === "square" || g.shape === "rectangle") && (
-              <>
-                <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }} title="Seats at the head (short end)">
-                  Head
-                  <input
-                    type="number"
-                    min={0}
-                    max={g.capacity === "" ? undefined : g.capacity}
-                    value={g.headCount ?? 1}
-                    disabled={readOnly}
-                    onChange={(e) => updateTableGroup(g.id, { headCount: e.target.value === "" ? "" : Number(e.target.value) })}
-                    onBlur={() => {
-                      if (g.headCount === "" || g.headCount === undefined) updateTableGroup(g.id, { headCount: 1 });
-                    }}
-                    aria-label="Seats at the head"
-                    className="w-12 px-2 py-1 rounded-md border text-sm text-center"
-                    style={{ borderColor: C.line }}
-                  />
-                </label>
-                <label className="flex items-center gap-1.5 text-xs" style={{ color: C.muted }} title="Seats at the foot (opposite short end)">
-                  Foot
-                  <input
-                    type="number"
-                    min={0}
-                    max={g.capacity === "" ? undefined : g.capacity}
-                    value={g.footCount ?? 1}
-                    disabled={readOnly}
-                    onChange={(e) => updateTableGroup(g.id, { footCount: e.target.value === "" ? "" : Number(e.target.value) })}
-                    onBlur={() => {
-                      if (g.footCount === "" || g.footCount === undefined) updateTableGroup(g.id, { footCount: 1 });
-                    }}
-                    aria-label="Seats at the foot"
-                    className="w-12 px-2 py-1 rounded-md border text-sm text-center"
-                    style={{ borderColor: C.line }}
-                  />
-                </label>
-              </>
-            )}
-            <IconBtn danger title="Remove table type" onClick={() => removeTableGroupWithUndo(g.id)} disabled={readOnly}>
-              <Trash2 size={15} />
-            </IconBtn>
+              <IconBtn danger title="Remove table type" onClick={() => removeTableGroupWithUndo(g.id)} disabled={readOnly}>
+                <Trash2 size={16} />
+              </IconBtn>
+            </div>
+
+            {/* Count, seats, shape — labelled, touch-sized */}
+            <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+              <div className="flex flex-col gap-1">
+                <span className={fieldLabel} style={{ color: C.muted }}>
+                  Tables
+                </span>
+                <Stepper
+                  label="Number of tables of this type"
+                  value={g.count}
+                  disabled={readOnly}
+                  onChange={(v) => updateTableGroup(g.id, { count: v })}
+                  onBlur={() => {
+                    if (g.count === "") updateTableGroup(g.id, { count: 0 });
+                  }}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className={fieldLabel} style={{ color: C.muted }}>
+                  Seats each
+                </span>
+                <Stepper
+                  label="Seats per table"
+                  value={g.capacity}
+                  min={1}
+                  disabled={readOnly}
+                  onChange={(v) => updateTableGroup(g.id, { capacity: v })}
+                  onBlur={() => {
+                    if (g.capacity === "") updateTableGroup(g.id, { capacity: 1 });
+                  }}
+                />
+              </div>
+              <label className="flex flex-col gap-1">
+                <span className={fieldLabel} style={{ color: C.muted }}>
+                  Shape
+                </span>
+                <select
+                  value={g.shape || "round"}
+                  disabled={readOnly}
+                  onChange={(e) => updateTableGroup(g.id, { shape: e.target.value as TableShape })}
+                  aria-label="Table shape"
+                  className="h-11 px-3 rounded-lg border text-sm"
+                  style={{ borderColor: C.line, color: C.ink, backgroundColor: C.card }}
+                >
+                  <option value="round">Round</option>
+                  <option value="oval">Oval</option>
+                  <option value="square">Square</option>
+                  <option value="rectangle">Rectangle</option>
+                </select>
+              </label>
+              {isRect && (
+                <>
+                  <div className="flex flex-col gap-1" title="Seats at the head (short end)">
+                    <span className={fieldLabel} style={{ color: C.muted }}>
+                      Head
+                    </span>
+                    <Stepper
+                      label="Seats at the head"
+                      value={g.headCount ?? 1}
+                      max={g.capacity === "" ? undefined : g.capacity}
+                      disabled={readOnly}
+                      onChange={(v) => updateTableGroup(g.id, { headCount: v })}
+                      onBlur={() => {
+                        if (g.headCount === "" || g.headCount === undefined) updateTableGroup(g.id, { headCount: 1 });
+                      }}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1" title="Seats at the foot (opposite short end)">
+                    <span className={fieldLabel} style={{ color: C.muted }}>
+                      Foot
+                    </span>
+                    <Stepper
+                      label="Seats at the foot"
+                      value={g.footCount ?? 1}
+                      max={g.capacity === "" ? undefined : g.capacity}
+                      disabled={readOnly}
+                      onChange={(v) => updateTableGroup(g.id, { footCount: v })}
+                      onBlur={() => {
+                        if (g.footCount === "" || g.footCount === undefined) updateTableGroup(g.id, { footCount: 1 });
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="text-xs mt-3" style={{ color: C.muted }}>
+              {count} {count === 1 ? "table" : "tables"} × {seatsEach} = <strong style={{ color: C.ink }}>{count * seatsEach} seats</strong>
+            </div>
             {(() => {
               const removed = deletedTables.filter((t) => t.groupId === g.id);
               if (removed.length === 0) return null;
               return (
-                <div className="basis-full flex items-center gap-2 text-xs" style={{ color: C.muted }}>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs mt-2" style={{ color: C.muted }}>
                   {removed.length} of these removed from the floor plan ({removed.map((t) => t.label).join(", ")})
                   {!readOnly && (
                     <button
@@ -284,7 +294,8 @@ export default function TablesTab() {
               );
             })()}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <button
