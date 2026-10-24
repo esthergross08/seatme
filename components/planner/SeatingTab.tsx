@@ -809,11 +809,13 @@ export default function SeatingTab() {
                   window.removeEventListener("mouseup", onMouseUp);
                   window.removeEventListener("touchmove", onTouchMove);
                   window.removeEventListener("touchend", onTouchEnd);
+                  window.removeEventListener("touchcancel", cleanup);
                 }
                 window.addEventListener("mousemove", onMouseMove);
                 window.addEventListener("mouseup", onMouseUp);
                 window.addEventListener("touchmove", onTouchMove, { passive: false });
                 window.addEventListener("touchend", onTouchEnd);
+                window.addEventListener("touchcancel", cleanup);
               };
               const startFixtureDrag = (e: React.MouseEvent) => {
                 if (readOnly) return;
@@ -1090,11 +1092,13 @@ export default function SeatingTab() {
                   window.removeEventListener("mouseup", onMouseUp);
                   window.removeEventListener("touchmove", onTouchMove);
                   window.removeEventListener("touchend", onTouchEnd);
+                  window.removeEventListener("touchcancel", cleanup);
                 }
                 window.addEventListener("mousemove", onMouseMove);
                 window.addEventListener("mouseup", onMouseUp);
                 window.addEventListener("touchmove", onTouchMove, { passive: false });
                 window.addEventListener("touchend", onTouchEnd);
+                window.addEventListener("touchcancel", cleanup);
               };
               const startTableDrag = (e: React.MouseEvent) => {
                 if (readOnly) return;
@@ -1155,11 +1159,13 @@ export default function SeatingTab() {
                   window.removeEventListener("mouseup", onMouseUp);
                   window.removeEventListener("touchmove", onTouchMove);
                   window.removeEventListener("touchend", onTouchEnd);
+                  window.removeEventListener("touchcancel", cleanup);
                 }
                 window.addEventListener("mousemove", onMouseMove);
                 window.addEventListener("mouseup", onMouseUp);
                 window.addEventListener("touchmove", onTouchMove, { passive: false });
                 window.addEventListener("touchend", onTouchEnd);
+                window.addEventListener("touchcancel", cleanup);
               };
               const isResizingThis = resizingGroupId === t.groupId;
               // While actively dragging this table's resize handle, render at the
