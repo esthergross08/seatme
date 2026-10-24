@@ -243,6 +243,8 @@ interface RsvpConfig {
 }
 
 interface PlannerData {
+  // Event type picked when the event was created (lib/eventPresets.ts), kept for later features.
+  eventType?: string;
   tableGroups?: TableGroup[];
   guests?: Guest[];
   groups?: Group[];
@@ -1400,6 +1402,7 @@ export default function SeatingPlanner({
           posterPalette,
           posterFont,
           rsvpConfig: { collectComments, courses },
+          eventType: initialData?.eventType,
         },
         updated_at: savedAt,
       };

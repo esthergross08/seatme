@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { C, FONT } from "@/lib/theme";
+import { EVENT_PRESETS, describeSetup, getEventPreset } from "@/lib/eventPresets";
 
 
 interface PastEvent {
@@ -41,6 +42,8 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
   const [eventDate, setEventDate] = useState("");
   const [location, setLocation] = useState("");
   const [maxCapacity, setMaxCapacity] = useState("");
+  // Event type preset ("" = start from scratch). Pre-fills tables sized to the guest count.
+  const [presetId, setPresetId] = useState("");
 
   // Past locations you've used, fetched fresh each time the modal opens — this is what
   // powers both the location autocomplete and the "you've been here before, want to
@@ -130,6 +133,7 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
     setEventDate("");
     setLocation("");
     setMaxCapacity("");
+    setPresetId("");
     setCopySetup(false);
     setError(null);
     setOpen(true);
@@ -146,6 +150,13 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
     });
   }
 
+  const preset = getEventPreset(presetId);
+  const presetGuests = maxCapacity !== "" && Number(maxCapacity) > 0 ? Number(maxCapacity) : preset?.typicalGuests ?? 0;
+  const presetPreview = useMemo(
+    () => (preset ? describeSetup(preset.build(presetGuests)) : null),
+    [preset, presetGuests]
+  );
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -161,7 +172,10 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
           tableNameOverrides: matchedEvent.data?.tableNameOverrides ?? {},
           tablePositions: matchedEvent.data?.tablePositions ?? {},
         }
+      : preset
+      ? { tableGroups: preset.build(presetGuests) }
       : {};
+    if (presetId) Object.assign(seedData, { eventType: presetId });
     const { data, error } = await supabase
       .from("events")
       .insert({
@@ -214,7 +228,7 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
 
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 overflow-y-auto"
           style={{ backgroundColor: "rgba(34,31,43,0.45)" }}
           onClick={(e) => {
             if (e.target === e.currentTarget) setOpen(false);
@@ -258,6 +272,48 @@ export default function NewEventButton({ ownerId }: { ownerId: string }) {
                   style={{ borderColor: C.line, color: C.ink }}
                 />
               </label>
+
+              <fieldset className="flex flex-col gap-1.5">
+                <legend className="text-xs font-medium mb-1.5" style={{ color: C.ink }}>
+                  Event type
+                </legend>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[...EVENT_PRESETS.map((p) => ({ id: p.id, label: p.label })), { id: "", label: "Start from scratch" }].map(
+                    (option) => {
+                      const selected = presetId === option.id;
+                      return (
+                        <button
+                          key={option.id || "scratch"}
+                          type="button"
+                          onClick={() => setPresetId(option.id)}
+                          aria-pressed={selected}
+                          className="text-left text-xs px-2.5 py-2 rounded-lg border"
+                          style={{
+                            borderColor: selected ? C.gold : C.line,
+                            backgroundColor: selected ? C.goldSoft : "transparent",
+                            color: C.ink,
+                            fontWeight: selected ? 600 : 400,
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    }
+                  )}
+                </div>
+                {preset && presetPreview && (
+                  <p className="text-[11px] leading-snug mt-0.5" style={{ color: C.muted }}>
+                    {copySetup ? (
+                      "You're reusing a saved table setup below, so this preset won't add tables."
+                    ) : (
+                      <>
+                        {presetPreview}, for {presetGuests} guests
+                        {maxCapacity === "" ? " (a typical size: set Max capacity to match your list)" : ""}.
+                      </>
+                    )}
+                  </p>
+                )}
+              </fieldset>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1">
